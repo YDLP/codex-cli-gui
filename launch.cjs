@@ -110,6 +110,11 @@ function startDetached() {
     windowsHide: true,
     stdio: ['ignore', log, log],
     cwd: __dirname,
+    // The BRIDGE also opens a browser on startup (that is what makes plain
+    // `node launch.cjs` work in foreground mode). In detached mode the caller
+    // opens it instead, so without this the first cold start opened TWO windows
+    // -- one from the bridge, one from launch.cjs/the VBS.
+    env: { ...process.env, CODEX_GUI_NO_BROWSER: '1' },
   });
   child.unref();
   fs.writeFileSync(PID_FILE, String(child.pid), 'utf8');
