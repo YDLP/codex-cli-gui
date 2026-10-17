@@ -105,11 +105,15 @@ If Not fso.FileExists(here & "\launch.cjs") Then
   WScript.Quit 1
 End If
 
-' --- run ----------------------------------------------------------------
-cmd = """" & nodeExe & """ """ & here & "\launch.cjs"" --detach"
+' --- start the service (browser opening is done HERE, not in node) -------
+' Why: this script launches node with window style 0 (SW_HIDE). That show state
+' is inherited by anything node spawns, so a browser started from launch.cjs got
+' a HIDDEN window: it exists, it loads the page, and IsWindowVisible/AppActivate
+' both say there is nothing. Measured -- the window was simply invisible.
+' Opening the URL from here with style 1 gives the browser a normal window.
+cmd = """" & nodeExe & """ """ & here & "\launch.cjs"" --detach --no-browser"
 LogIt "start  node=" & nodeExe
 
-' 0 = hide the window, False = do not wait (launch.cjs detaches the service).
 On Error Resume Next
 sh.Run cmd, 0, False
 If Err.Number <> 0 Then
@@ -120,27 +124,58 @@ If Err.Number <> 0 Then
 End If
 On Error Goto 0
 
+' --- wait for the service, then open the page ---------------------------
+Dim waited, healthy, http
+healthy = False
+waited = 0
+Do While waited < 25000
+  On Error Resume Next
+  Set http = CreateObject("MSXML2.XMLHTTP")
+  http.Open "GET", "http://127.0.0.1:8790/api/health", False
+  http.Send
+  If Err.Number = 0 And http.Status = 200 Then healthy = True
+  Err.Clear
+  On Error Goto 0
+  If healthy Then Exit Do
+
+  WScript.Sleep 500
+  waited = waited + 500
+Loop
+
+If healthy Then
+  LogIt "service healthy after " & waited & " ms -> opening the page"
+  On Error Resume Next
+  ' style 1 = normal window, so the browser window is VISIBLE
+  sh.Run "http://127.0.0.1:8790/", 1, False
+  If Err.Number <> 0 Then
+    LogIt "FAIL  could not open the page: " & Err.Number & ": " & Err.Description
+    MsgBox "The service is running, but the page could not be opened:" & vbCrLf & _
+           "http://127.0.0.1:8790/" & vbCrLf & vbCrLf & "Details: " & logFile, 48, "Codex GUI"
+  End If
+  On Error Goto 0
+Else
+  LogIt "WARN  the service never became healthy; not opening a page"
+  MsgBox "Codex GUI did not start within 25 seconds." & vbCrLf & vbCrLf & _
+         "Details: " & logFile, 48, "Codex GUI"
+  WScript.Quit 1
+End If
+
 ' --- bring the window to the front --------------------------------------
-' Windows refuses to let a background process steal focus, so the browser
-' window opens BEHIND whatever the user is looking at. That is the difference
-' between "it launched" and "double-clicking does nothing". AppActivate asks
-' Windows to activate a window by title, which is allowed from here.
-'
-' The browser is opened by launch.cjs, asynchronously, and only after it has
-' confirmed the service is healthy -- so poll for a while instead of guessing
-' a single delay.
-Dim waited, activated
-activated = False
+' Windows refuses to let a background process steal focus, so even a visible
+' window can open BEHIND whatever the user is looking at -- which reads as
+' "double-clicking does nothing". AppActivate is allowed from here.
+Dim focused
+focused = False
 waited = 0
 Do While waited < 15000
   WScript.Sleep 500
   waited = waited + 500
   If sh.AppActivate("Codex GUI") Then
-    activated = True
+    focused = True
     Exit Do
   End If
 Loop
-If activated Then
+If focused Then
   LogIt "focused the Codex GUI window after " & waited & " ms"
 Else
   LogIt "WARN  no Codex GUI window to focus after " & waited & " ms (the page may still have opened)"

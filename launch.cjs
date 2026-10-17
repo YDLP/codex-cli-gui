@@ -14,6 +14,14 @@ const { spawn } = require('node:child_process');
 const { codexInvocation } = require('./codex-process.cjs');
 
 const DETACH = process.argv.includes('--detach') || process.env.CODEX_GUI_DETACH === '1';
+/**
+ * Do not open a browser; the caller will.
+ *
+ * start-hidden.vbs passes this: it runs node with window style SW_HIDE, and that
+ * show state is inherited by anything node spawns, so a browser opened from here
+ * got an INVISIBLE window. The VBS opens the page itself with a normal window.
+ */
+const NO_BROWSER = process.argv.includes('--no-browser') || process.env.CODEX_GUI_NO_BROWSER === '1';
 const STATE_DIR = path.join(__dirname, '.codex-gui');
 const LOG_FILE = path.join(STATE_DIR, 'bridge.log');
 const PID_FILE = path.join(STATE_DIR, 'bridge.pid');
@@ -80,6 +88,9 @@ function openBrowser(url) {
     logAttempt('FAIL  could not open a browser: ' + error.message);
     console.warn('Open this URL in your browser: '+url+' ('+error.message+')');
   });
+  child.on('exit', (code, signal) => {
+    logAttempt('browser process exited code=' + code + ' signal=' + signal);
+  });
   child.unref();
 }
 
@@ -136,8 +147,8 @@ async function main() {
     if (!health.capabilities.scopedStop) console.log('An older Codex GUI is running. Finish its task, close its console, then launch again.');
     else console.log('Codex GUI '+(health.version||'')+' is already running: '+url);
     logAttempt('already running pid=' + (health.pid ?? '?') + ' -> opening browser');
-    if (process.env.CODEX_GUI_NO_BROWSER !== '1') openBrowser(url);
-    else logAttempt('CODEX_GUI_NO_BROWSER=1 -> browser NOT opened');
+    if (!NO_BROWSER) openBrowser(url);
+    else logAttempt('browser opening delegated to the caller (--no-browser)');
     return;
   }
   codexInvocation([]); // fail with actionable installation guidance before spawning
@@ -160,8 +171,8 @@ async function main() {
       logAttempt('FAIL  the detached service never became healthy');
       throw new Error('背景服务没有启动成功。请看日志：' + LOG_FILE);
     }
-    logAttempt('service is up -> opening browser');
-    if (process.env.CODEX_GUI_NO_BROWSER !== '1') openBrowser(url);
+    logAttempt('service is up');
+    if (!NO_BROWSER) openBrowser(url);
     return;
   }
 

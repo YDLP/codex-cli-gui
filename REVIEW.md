@@ -220,64 +220,92 @@ exec ... resume <id> --json --skip-git-repo-check -m gpt-6.1-sol -c model_reason
 
 **不确定时不要问模型**——看这个提示，或看 bridge 的 `meta.args`。
 
-### ⛔ 双击「完全没反应」——Windows 不让后台进程抢焦点
+### ⛔ 双击「完全没反应」——继承的 SW_HIDE，加上前台锁
 
-用户报告桌面快捷方式双击没反应。查下来**一切机制都是好的**：
+用户报告桌面快捷方式双击没反应。**这个 bug 查了三轮，前两轮的结论都是错的**，记下来是因为错法本身很有代表性。
+
+#### 第一轮：以为机制坏了 —— 全好
 
 | 检查 | 结果 |
 |---|---|
 | 服务 | 健康，`/api/health` 正常 |
 | 页面 | HTTP 200，完整 HTML |
 | VBS | `cscript` 跑无错误 |
-| `cmd /c start` | **实测浏览器确实收到了请求**（起了个临时 HTTP 服务端点，能看到命中） |
-| 默认浏览器 | Edge，关联正常 |
-| node | 在 PATH 里 |
+| `cmd /c start` | **实测浏览器确实收到了请求**（起临时 HTTP 服务端点，看得到命中） |
+| 默认浏览器 / node | 都正常 |
 
-**真正原因**：Windows 的**前台锁**。后台进程（wscript → node）启动的浏览器窗口
-**能创建，但拿不到前台焦点**，于是开在用户当前窗口的后面 —— 肉眼就是"什么都没发生"。
+#### 第二轮：以为是前台锁 —— 结论对了一半，但验证被污染
 
-用 `EnumWindows` + `GetForegroundWindow` 实测：
+实测到后台进程开的窗口拿不到焦点，于是加了「`--new-window` + `AppActivate`」。
+当时验证**通过了** —— 但那是因为**之前测试留下的一个 Codex GUI 窗口还在**，
+`AppActivate` 只是把旧窗口调到前台。**典型的假阳性。**
 
-```
-before: probe 和另外 6 个页面 - Microsoft Edge
-launch wscript...
-after : probe 和另外 6 个页面 - Microsoft Edge     ← 完全没变
-```
+用户随后给出关键信息：**只有 stop 之后才能打开**。也就是说**复用已有服务**这条路径才是坏的。
 
-而窗口列表里确实多了一个 `Codex GUI - Microsoft Edge` —— **窗口在，只是不在前台**。
+#### 第三轮：按真实场景复现
 
-#### 修法：开新窗口 + 主动激活
-
-1. `launch.cjs` 从注册表解析默认浏览器；Chromium 系用 `--new-window` 启动，
-   **保证是一个独立窗口**（否则 Edge 只会在已有窗口里加一个后台标签）
-2. `start-hidden.vbs` 启动后**轮询 `sh.AppActivate("Codex GUI")`**（最多 15 秒），
-   把那个窗口调到前台
-
-实测结果：
+关掉 GUI 窗口、保持服务运行、再双击 —— 稳定复现：
 
 ```
+already running pid=25260 -> opening browser
 opening browser (new window): msedge.exe
-focused the Codex GUI window after 500 ms
-foreground: Codex GUI - 个人 - Microsoft Edge      ← 成功
+WARN  no Codex GUI window to focus after 15000 ms
 ```
 
-#### 顺带补上的诊断能力（这才是最大的收获）
+**窗口根本没出现**，不是"出现了但不在前台"。
 
-`wscript` 没有控制台，`launch.cjs` 里所有 `console.log` / 异常**全部消失**。所以
-"双击没反应"根本无从查起。现在两处都写 `.codex-gui/launch.log`：
+**真正原因**：`sh.Run cmd, 0, False` 里的 **`0` 是 `SW_HIDE`**。这个显示状态
+**会被子进程继承** —— node 是隐藏的，node 再 spawn 的 msedge 也带着隐藏标志，
+于是浏览器窗口**创建了、也加载了页面，但它是隐藏的**。
+`IsWindowVisible` 返回假，`AppActivate` 自然找不到。
+
+冷启动之所以"看起来能用"：那时 Edge 常常没在运行，走的是另一条路径。
+
+#### 修法：谁有窗口样式，谁就负责开浏览器
+
+```vbs
+' VBS 用样式 0 跑 node，并告诉它别开浏览器
+sh.Run """" & nodeExe & """ """ & here & "\launch.cjs"" --detach --no-browser", 0, False
+' 轮询 /api/health，等服务起来
+' 然后自己用样式 1（正常窗口）打开页面
+sh.Run "http://127.0.0.1:8790/", 1, False
+' 最后 AppActivate 把它调到前台
+```
+
+`launch.cjs` 新增 `--no-browser`，把开浏览器的责任交回调用方。
+两种场景实测：
+
+| 场景 | 结果 |
+|---|---|
+| 服务在跑 + 窗口已关（**用户报的那条**） | `service healthy after 0 ms -> opening the page` / `focused after 500 ms` ✓ |
+| 服务已停（冷启动） | 服务启动 → 开页面 → `focused after 500 ms` ✓ |
+
+窗口列表确认：`可见的 Codex GUI 窗口: 1`，前台就是它。
+
+#### 顺带补上的诊断能力（这是最大的收获）
+
+`wscript` 没有控制台，`launch.cjs` 里所有 `console.log` / 异常**全部消失** —— 这才是
+"双击没反应"查不动的根本原因。现在两处都写 `.codex-gui/launch.log`：
 
 ```
-2026/10/17 16:11:34  start  node=D:\nodejs\node.exe
-launcher  08:11:34.901  already running pid=23888 -> opening browser
-launcher  08:11:34.938  opening browser (new window): msedge.exe
-2026/10/17 16:11:34  focused the Codex GUI window after 500 ms
+16:18:01  start  node=D:\nodejs\node.exe
+launcher  08:18:01.855  no service on :8790 -> starting a detached bridge
+launcher  08:18:01.998  service is up
+16:18:01  service healthy after 0 ms -> opening the page
+16:18:01  focused the Codex GUI window after 500 ms
 ```
 
 VBS 还补了 node 的 4 级查找（`CODEX_GUI_NODE` → PATH → 常见安装目录 → 注册表），
 原来只扫 PATH。
 
-> ⚠️ `reg query` 取**默认值**必须用 `/ve`，用 `/v (Default)` 会报"找不到指定的注册表项或值"，
-> 然后被 catch 吞掉 → 静默返回 null。这个坑让浏览器检测白白失效一次。
+> ⚠️ **教训一：验证被污染是最危险的假阳性。** 我"验证通过"时，目标窗口其实早就存在。
+> 复现脚本必须先清理前置状态（这次是：先关掉所有 GUI 窗口）。
+>
+> ⚠️ **教训二：'能创建' 不等于 '可见'。** 我只检查了窗口是否存在/是否在前台，
+> 没想到第三种状态 —— **存在但隐藏**。`IsWindowVisible` 才是该查的。
+>
+> ⚠️ `reg query` 取**默认值**必须用 `/ve`；用 `/v (Default)` 会报错并被 catch 吞掉，
+> 静默返回 null，让浏览器检测白白失效一次。
 >
 > ⚠️ 我改 VBS 时一度用了未定义的 `StripSlash`，属自造 bug，已修并验证。
 
