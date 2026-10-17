@@ -309,6 +309,14 @@
   .fch-add{color:var(--ok); border-color:var(--ok)}
   .fch-delete{color:var(--bad, #d9534f); border-color:var(--bad, #d9534f)}
   .fch-move{color:var(--accent); border-color:var(--accent)}
+  /* +N -N in the summary, so a folded card still shows there is a diff. */
+  .fch-stat{
+    flex:none; font:11px/1.4 "Cascadia Mono",Consolas,monospace;
+    color:var(--dim); white-space:nowrap;
+  }
+  /* A file change stands alone in the transcript, not inside the tool group. */
+  .fch-card{border-radius:6px; overflow:hidden}
+  .fch-card > summary .cmd-peek{color:var(--fg)}
   /* Unified diff. Structural characters live in the text; only colour is CSS. */
   pre.diff{padding:6px 0; background:var(--code); overflow-x:auto}
   pre.diff .dl{
@@ -649,6 +657,13 @@
   settingsDrawerMedia.addEventListener('change', (event) => $('aside').classList.toggle('hidden', event.matches));
   sessionsDrawerMedia.addEventListener('change', (event) => $('sessionsPane').classList.toggle('hidden', event.matches));
   const commandCards = new Map();
+  /**
+   * File-change cards belonging to the CURRENT turn.
+   *
+   * They are no longer inside the tool group, so the group cannot be searched for
+   * them when turn.completed supplies the diffs. Reset on every new exchange.
+   */
+  let turnFileCards = [];
 
   async function requestJSON(url, options = {}){
     const response = await fetch(url, options);
@@ -767,6 +782,7 @@
    */
   function clearTurnCards(){
     commandCards.clear();
+    turnFileCards = [];
   }
 
   let turnCounter = 0;
@@ -1128,7 +1144,11 @@
    * blockquotes, unordered/ordered lists, links, horizontal rules.
    */
   function renderInline(src, parent){
-    const re = /(`[^`\n]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]\n]+\]\([^()\s]+\))|(https?:\/\/[^\s<>()]+)/g;
+    // The destination may be wrapped in <...> to allow spaces (CommonMark), which
+    // is exactly what Codex emits for local paths like
+    // [查看文档](<E:/dir/00 自测问答.md>). Without that branch the whole thing was
+    // rendered as literal text.
+    const re = /(`[^`\n]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]\n]+\]\((?:<[^>\n]*>|[^()\s]+)\))|(https?:\/\/[^\s<>()]+)/g;
     let last = 0, m;
     while ((m = re.exec(src))){
       if (m.index > last) parent.appendChild(document.createTextNode(src.slice(last, m.index)));
@@ -1149,9 +1169,17 @@
         const split = tok.indexOf('](');
         const a = document.createElement('a');
         a.textContent = tok.slice(1, split);
-        // Only http(s): the URL comes from the model.
-        const href = tok.slice(split + 2, -1);
-        if (/^https?:\/\//i.test(href)){ a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+        // Only http(s) gets an href: the URL comes from the model. Strip the
+        // CommonMark <...> wrapper so the tooltip shows a clean path.
+        let href = tok.slice(split + 2, -1);
+        if (href.startsWith('<') && href.endsWith('>')) href = href.slice(1, -1);
+        if (/^https?:\/\//i.test(href)){
+          a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        } else {
+          // A local path. Not clickable from the browser, but show it on hover
+          // instead of dumping the raw [text](<path>) syntax into the transcript.
+          a.title = href;
+        }
         parent.appendChild(a);
       } else {
         const a = document.createElement('a');
@@ -1645,21 +1673,46 @@
     return pre;
   }
 
+  /**
+   * Count the +/- lines in a unified diff.
+   *
+   * The counts go in the SUMMARY, because a file-change card is folded by default
+   * and nested one level inside the turn's tool group. Without them the only hint
+   * that a turn touched files is the word "文件" -- reported as "the diff does not
+   * show" when it was simply two clicks away.
+   */
+  function diffStats(files){
+    let add = 0, del = 0;
+    for (const f of files){
+      if (!f.diff) continue;
+      for (const line of f.diff.split('\n')){
+        if (line.startsWith('+++') || line.startsWith('---')) continue;
+        if (line.startsWith('+')) add++;
+        else if (line.startsWith('-')) del++;
+      }
+    }
+    return { add, del };
+  }
+
   function fileChangeBody(item){
     const files = normalizeFileChanges(item);
     const d = document.createElement('details');
     d.className = 'cmd filechg';
     const s = document.createElement('summary');
-    const st = item.status === 'completed' || item.status === 'in_progress'
-      ? '<span class="pill">文件</span>'
-      : '<span class="pill">文件</span>';
-    s.innerHTML = st;
+    s.innerHTML = '<span class="pill">文件</span>';
+    const stats = diffStats(files);
     const peek = document.createElement('span');
     peek.className = 'cmd-peek';
     peek.textContent = files.length
       ? files.map((f) => (FILE_KIND_LABEL[f.kind] || f.kind) + ' ' + shortPath(f.path)).join('、')
       : '（无变化信息）';
     s.appendChild(peek);
+    if (stats.add || stats.del){
+      const stat = document.createElement('span');
+      stat.className = 'fch-stat';
+      stat.textContent = '+' + stats.add + ' −' + stats.del;
+      s.appendChild(stat);
+    }
     d.appendChild(s);
 
     for (const f of files){
@@ -1694,69 +1747,73 @@
    * card that already had a diff is simply rebuilt with the same content.
    */
   function upgradeFileChangeCards(files){
-    if (!toolGroup || !toolGroup.isConnected) return;
     const byPath = new Map();
     for (const f of files){
       if (f && f.path) byPath.set(String(f.path), f);
     }
     if (!byPath.size) return;
-    let changed = false;
-    for (const card of [...toolGroup.querySelectorAll('.grp-body details.filechg')]){
+    for (let i = 0; i < turnFileCards.length; i++){
+      const card = turnFileCards[i];
+      if (!card || !card.isConnected) continue;
       const paths = [...card.querySelectorAll('.fch-head code')].map((c) => c.title || c.textContent);
       const matched = paths.map((p) => byPath.get(p)).filter(Boolean);
       if (!matched.length) continue;
-      if (card.querySelector('pre.diff') && matched.every((m) => !m.unified_diff)) continue;
       const rebuilt = fileChangeBody({
         id: card.dataset.id, type: 'file_change', status: 'completed',
         changes: matched.map((f) => ({ path: f.path, type: f.type, unified_diff: f.unified_diff })),
       });
-      rebuilt.dataset.exit = '0';
-      rebuilt.dataset.userOpened = card.dataset.userOpened || '';
+      rebuilt.classList.add('fch-card');
+      rebuilt.dataset.id = card.dataset.id || '';
       const wasOpen = card.open;
       card.replaceWith(rebuilt);
-      programmaticOpen(rebuilt, wasOpen);
+      turnFileCards[i] = rebuilt;
+      // Now that the diff is here, reveal it unless the user folded the card.
+      programmaticOpen(rebuilt, card.dataset.userOpened === '0' ? false : (wasOpen || !!rebuilt.querySelector('pre.diff')));
       rebuilt.addEventListener('toggle', () => {
         if (consumeScripted(rebuilt)) return;
         setUserOpened(rebuilt, rebuilt.open);
       });
-      changed = true;
     }
-    if (changed) refreshToolGroupHeader();
   }
 
+  /**
+   * A file change is its own card, NOT part of the turn's tool group.
+   *
+   * It used to live inside the group, which meant two clicks to see a diff (open
+   * the group, then open the card) and it disappeared from view entirely whenever
+   * the group was folded. It now sits in the transcript like a reply-level card,
+   * above the answer, and opens itself when it actually carries a diff.
+   */
   function addFileChange(item, replay){
     const previous = item.id && commandCards.get(item.id);
-    const d = fileChangeBody(item);
-    // The group header counts cards by `dataset.exit`: '' = running, '0' = ok,
-    // anything else = failed. A file change has no exit code, but leaving the
-    // attribute unset made `undefined === ''` false and every file change was
-    // reported as a FAILED tool ("工具 5 条 · 1 条失败").
-    d.dataset.exit = item.status === 'completed' ? '0'
-      : item.status === 'in_progress' ? '' : '1';
+    let d = fileChangeBody(item);
+    d.classList.add('fch-card');
     if (previous && previous.isConnected){
+      // `item.started` already created a card; replace it in place AND keep the
+      // per-turn index pointing at the live node, otherwise
+      // upgradeFileChangeCards() later iterates a detached element and the diff
+      // never arrives.
+      const slot = turnFileCards.indexOf(previous);
+      const wasOpen = previous.open;
       previous.replaceWith(d);
+      d.dataset.id = item.id || '';
+      if (slot >= 0) turnFileCards[slot] = d; else turnFileCards.push(d);
       if (previous.dataset.userOpened === '1') setUserOpened(d, true);
+      programmaticOpen(d, wasOpen || !!d.querySelector('pre.diff'));
     } else {
-      ensureToolGroup();
-      toolGroupBox.appendChild(d);
-      toolGroupCount++;
-      if (replay){
-        programmaticOpen(d, false);
-      } else {
-        if (toolGroup.dataset.userClosed !== '1') programmaticOpen(toolGroup, true);
-        // A live file change has no diff yet; keep it folded so it does not push
-        // the reply around, unless it is still in progress.
-        programmaticOpen(d, false);
-      }
+      d.dataset.id = item.id || '';
+      insertBeforeAgentRow(d);
+      turnFileCards.push(d);
+      // A diff is the whole point of the card, so show it. A card with no diff
+      // yet (live, before turn.completed fills it in) stays folded to keep the
+      // transcript calm.
+      programmaticOpen(d, !!d.querySelector('pre.diff'));
     }
     if (item.id) commandCards.set(item.id, d);
     d.addEventListener('toggle', () => {
       if (consumeScripted(d)) return;
-      if (d.open) setUserOpened(d, true);
-      else setUserOpened(d, false);
+      setUserOpened(d, d.open);
     });
-    refreshToolGroupHeader();
-    if (replay) programmaticOpen(toolGroup, false);
   }
 
   function addCmd(item, replay){

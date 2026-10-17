@@ -83,6 +83,10 @@ if (args[0] === 'app-server') {
       '',
       '[link](https://example.com/a?b=1&c=2) and **bold** and `inline`',
       '',
+      // A local path wrapped in <...> (CommonMark) with a space in it -- exactly
+      // what Codex writes for file links. It used to render as raw syntax.
+      '[查看文档](<E:/dir/00 自测问答.md>)',
+      '',
       '```js',
       'const a = 1 < 2;',
       '```',

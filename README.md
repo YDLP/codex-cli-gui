@@ -27,7 +27,8 @@ better. This exists for the machines that fall through the cracks.
 - **Model + reasoning-effort pickers** — read from the CLI's own catalog
 - **Permission modes** — read-only / workspace-write / full-access, switchable per session
 - **Attachments** — images go in as images, everything else is handed over by path
-- **Tool activity as collapsible cards** — commands, exit codes, web searches and **file changes with diffs**, grouped per turn
+- **Tool activity as collapsible cards** — commands, exit codes and web searches grouped per turn
+- **File changes as their own card** — a coloured unified diff with `+N −N` in the summary, opened automatically, outside the tool group so folding tools never hides it
 - **Context meter** — how full the window is, plus an inferred "possible compaction" marker
 - **Native folder picker**, three themes, windowless detached launcher
 - **Zero runtime dependencies** — Node built-ins only; no `npm install` needed

@@ -272,12 +272,13 @@ async function main(){
     assert.equal(await evaluate("document.querySelectorAll('#log details.cmd').length"),5,
       'three commands, one web search and one file change');
     assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group').length"),1);
-    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group .grp-body details.cmd').length"),5,
-      'the web search and the file change must fold into the same group as the commands');
+    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group .grp-body details.cmd').length"),4,
+      'the web search must fold into the same group as the commands (the file change is standalone now)');
     assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group .grp-body details.cmd.web').length"),1);
     // File changes: rendered as tool activity, above the reply, inside the group.
     const fch=JSON.parse(await evaluate(`JSON.stringify({
-      cards:document.querySelectorAll('#log details.cmd-group .grp-body details.filechg').length,
+      cards:document.querySelectorAll('#log details.filechg').length,
+      inGroup:document.querySelectorAll('#log details.cmd-group details.filechg').length,
       rows:document.querySelectorAll('#log details.filechg .fch-head').length,
       kinds:[...document.querySelectorAll('#log details.filechg .fch-head .pill')].map(function(x){return x.textContent;}),
       paths:[...document.querySelectorAll('#log details.filechg .fch-head code')].map(function(x){return x.textContent;}),
@@ -286,6 +287,7 @@ async function main(){
       xss:!!window.__xss})`));
     console.log('       file change (live):', JSON.stringify(fch));
     assert.equal(fch.cards,1,'a file change must render one card: '+JSON.stringify(fch));
+    assert.equal(fch.inGroup,0,'the file change must be its own card, not inside the tool group: '+JSON.stringify(fch));
     assert.equal(fch.rows,3,'one row per changed path: '+JSON.stringify(fch));
     assert.deepEqual(fch.kinds,['修改','新增','删除'],'kind labels: '+JSON.stringify(fch));
     // A path containing a script tag must be TEXT, never markup.
@@ -452,6 +454,18 @@ async function main(){
     assert.ok(r.strong>=1,'bold must render');
     assert.ok(r.inlineCode>=1,'inline code must render');
     assert.ok(r.link>=1,'links must render as anchors');
+    // A local path destination in CommonMark's <...> form (spaces allowed) must
+    // become an anchor, not raw syntax. Codex writes links this way for files.
+    const localLink=JSON.parse(await evaluate(`(() => {
+      const a=[...document.querySelectorAll('#log .bubble.md a')].find(x=>x.textContent==='查看文档');
+      return JSON.stringify({found:!!a, href:a?a.getAttribute('href'):null, title:a?a.title:'',
+        raw:(document.getElementById('log').textContent||'').includes('](<')});
+    })()`));
+    console.log('       local path link:', JSON.stringify(localLink));
+    assert.equal(localLink.found,true,'[text](<path with space>) must render as an anchor: '+JSON.stringify(localLink));
+    assert.equal(localLink.href,null,'a local path must not become an href: '+JSON.stringify(localLink));
+    assert.match(localLink.title,/00 自测问答\.md/,'the path belongs in the tooltip: '+JSON.stringify(localLink));
+    assert.equal(localLink.raw,false,'the raw [..](<..>) syntax must not survive: '+JSON.stringify(localLink));
     assert.equal(r.injected,0,'model output must not create any element: '+md);
     assert.equal(r.xssRan,0,'the injection payload must never execute');
     assert.equal(r.payloadVisible,true,'the payload stays visible as literal text');
@@ -526,12 +540,15 @@ async function main(){
     const G=JSON.parse(grp);
     console.log('       command group:', grp);
     assert.equal(G.groups,1,'all of a turn\'s tool activity must share one group: '+grp);
-    assert.equal(G.rows,5,'every tool row must still be listed inside it: '+grp);
+    assert.equal(G.rows,4,'every command and web search must be listed inside the group: '+grp);
     assert.equal(G.open,false,'the group must fold when the turn ends: '+grp);
-    assert.match(G.header,/5 条/,'the header must state how many tools ran: '+grp);
-    // A file change has no exit code; it must still count as a success, not a
-    // failure ("工具 5 条 · 1 条失败" was the bug when dataset.exit was unset).
-    assert.doesNotMatch(G.header,/失败/,'a completed file change is not a failure: '+grp);
+    assert.match(G.header,/4 条/,'the header must state how many tools ran: '+grp);
+    // The file change is deliberately NOT a tool here: it is its own card, so it
+    // must not appear in the group nor in its count.
+    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group details.filechg').length"),0,
+      'the file change must stay out of the tool group: '+grp);
+    assert.equal(await evaluate("document.querySelectorAll('#log details.filechg').length"),1,
+      'exactly one standalone file-change card: '+grp);
     // A card the user opens by hand opts out of the automatic collapse: simulate
     // the manual open and confirm the guard is recorded (that flag is what
     // collapseToolCards() skips on a later turn).
@@ -626,7 +643,7 @@ async function main(){
     })()`));
     console.log('       replayed group:', JSON.stringify(got));
     assert.equal(got.groups,1,'the reloaded session must show a command group: '+JSON.stringify(got));
-    assert.equal(got.rows,3,'two commands and one file change must be replayed: '+JSON.stringify(got));
+    assert.equal(got.rows,2,'both commands must be replayed in the group: '+JSON.stringify(got));
     assert.equal(got.open,false,'a reloaded group must start folded, like a finished turn: '+JSON.stringify(got));
     assert.ok(got.full>60,'the full command text must be replayed, not just the peek: '+JSON.stringify(got));
 
@@ -647,7 +664,9 @@ async function main(){
     assert.deepEqual(replayed.added,['+BETA'],'added lines: '+JSON.stringify(replayed));
     assert.deepEqual(replayed.removed,['-beta'],'removed lines: '+JSON.stringify(replayed));
     assert.equal(replayed.hunks,1,'the @@ hunk header must render: '+JSON.stringify(replayed));
-    assert.equal(replayed.folded,false,'a replayed card starts folded: '+JSON.stringify(replayed));
+    // A card that carries a diff opens itself: the diff is the whole point, and
+    // burying it behind two clicks is what made it look like nothing rendered.
+    assert.equal(replayed.folded,true,'a replayed card with a diff opens: '+JSON.stringify(replayed));
     // Restore the sidebar fixture for the checks that follow.
     await evaluate("__test.realHistory=false");
     await evaluate(`__test.sessions=${JSON.stringify([
@@ -940,8 +959,8 @@ async function main(){
     await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",9000);
     assert.equal(await evaluate("document.querySelector('#log details.cmd-group').open"),false,
       'later commands must NOT re-open a group the user closed');
-    assert.equal(await evaluate("document.querySelectorAll('#log .grp-body details.cmd').length"),5,
-      'every tool must still be recorded inside the closed group (3 commands, 1 search, 1 file change)');
+    assert.equal(await evaluate("document.querySelectorAll('#log .grp-body details.cmd').length"),4,
+      'every tool must still be recorded inside the closed group (3 commands + 1 search; the file change is standalone)');
   });
   await check('the meter says so while a turn is running',async()=>{
     // `codex exec --json` reports usage only at turn.completed, so during a turn
