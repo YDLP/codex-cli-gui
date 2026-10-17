@@ -65,6 +65,11 @@ if (args[0] === 'app-server') {
     // A file change. MEASURED live shape: `changes` is an ARRAY of { path, kind }
     // and carries NO diff. One of the paths contains a script tag on purpose: the
     // renderer must show it as text.
+    // Also materialise a small text file so the viewer has something real to open.
+    try {
+      require('node:fs').writeFileSync(path.join(process.cwd(), 'sample.txt'),
+        'first line\nsecond line\nthird line\n', 'utf8');
+    } catch { /* cwd may be read-only in some fixture runs */ }
     const changedFiles = [
       { path: path.join(process.cwd(), 'note.txt'), kind: 'update' },
       { path: path.join(process.cwd(), 'added.md'), kind: 'add' },
@@ -86,6 +91,9 @@ if (args[0] === 'app-server') {
       // A local path wrapped in <...> (CommonMark) with a space in it -- exactly
       // what Codex writes for file links. It used to render as raw syntax.
       '[查看文档](<E:/dir/00 自测问答.md>)',
+      // A file that really exists in the working directory, so the in-page viewer
+      // can be driven end to end (open + jump to a line).
+      '[sample.txt](<' + path.join(process.cwd(), 'sample.txt') + '>)',
       '',
       '```js',
       'const a = 1 < 2;',

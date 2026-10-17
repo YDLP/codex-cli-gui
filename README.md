@@ -29,6 +29,7 @@ better. This exists for the machines that fall through the cracks.
 - **Attachments** — images go in as images, everything else is handed over by path
 - **Tool activity as collapsible cards** — commands, exit codes and web searches grouped per turn
 - **File changes as their own card** — a coloured unified diff with `+N −N` in the summary, opened automatically, outside the tool group so folding tools never hides it
+- **In-page file viewer** — `file.c:236` references open a side panel with numbered lines at that line, markdown rendered; nothing is handed to an external editor unless you ask for it
 - **Context meter** — how full the window is, plus an inferred "possible compaction" marker
 - **Native folder picker**, three themes, windowless detached launcher
 - **Zero runtime dependencies** — Node built-ins only; no `npm install` needed

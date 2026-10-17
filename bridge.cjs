@@ -517,6 +517,33 @@ function startRun(opts, res) {
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
+
+/**
+ * Validate a path the PAGE wants to read or open.
+ *
+ * These paths come out of model output, so the rule is absolute + exists +
+ * inside the configured working directory. Anything else is refused, which is
+ * what stops a reply from making the user open C:\Windows\... .
+ */
+function requireLocalPath(target) {
+  if (!target || !path.isAbsolute(target)) throw httpError('只能打开绝对路径');
+  let stat;
+  try { stat = fs.statSync(target); } catch { throw httpError('文件不存在：' + target, 404); }
+  if (!stat.isFile() && !stat.isDirectory()) throw httpError('不支持的类型');
+  const norm = (s) => (process.platform === 'win32' ? path.resolve(s).toLowerCase() : path.resolve(s));
+  const base = norm(settings.cwd || HERE);
+  // Compare case-insensitively, but RETURN the original casing: the viewer shows
+  // the name, and "sysm.c" instead of "SysM.c" looks wrong.
+  const resolved = path.resolve(target);
+  if (norm(resolved) !== base && !norm(resolved).startsWith(base + path.sep)) {
+    throw httpError('只能打开工作目录内的文件：' + target, 403);
+  }
+  return resolved;
+}
+
+/** name(lowercased) -> absolute path, so a repeated `file.c:12` click stays cheap. */
+const findFileCache = new Map();
+
 const server = http.createServer(async (req, res) => {
   try {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -758,21 +785,94 @@ const server = http.createServer(async (req, res) => {
      */
     if (req.method === 'POST' && p === '/api/open-path') {
       const body = await readBody(req).catch(() => ({}));
-      const target = String(body.path || '');
-      if (!target || !path.isAbsolute(target)) throw httpError('只能打开绝对路径');
-      let stat;
-      try { stat = fs.statSync(target); } catch { throw httpError('文件不存在：' + target, 404); }
-      if (!stat.isFile() && !stat.isDirectory()) throw httpError('不支持的类型');
-      const norm = (s) => (process.platform === 'win32' ? path.resolve(s).toLowerCase() : path.resolve(s));
-      const base = norm(settings.cwd || HERE);
-      const resolved = norm(target);
-      if (resolved !== base && !resolved.startsWith(base + path.sep)) {
-        throw httpError('只能打开工作目录内的文件：' + target, 403);
-      }
+      const resolved = requireLocalPath(String(body.path || ''));
       const child = spawn('cmd', ['/c', 'start', '', resolved], { windowsHide: true, stdio: 'ignore' });
       child.on('error', () => {});
       child.unref();
       json(res, 200, { ok: true });
+      return;
+    }
+
+    /**
+     * Read a local file for the in-page viewer.
+     *
+     * Clicking a reference used to hand the file to the OS default application,
+     * which for source files means an editor window and a context switch. The
+     * viewer wants the bytes instead: markdown rendered, everything else shown
+     * with line numbers so a `file.c:236` reference is reachable.
+     */
+    if (req.method === 'POST' && p === '/api/file') {
+      const body = await readBody(req).catch(() => ({}));
+      const resolved = requireLocalPath(String(body.path || ''));
+      let stat;
+      try { stat = fs.statSync(resolved); } catch { throw httpError('文件不存在：' + resolved, 404); }
+      if (!stat.isFile()) throw httpError('不是一个文件：' + resolved);
+      const LIMIT = 512 * 1024;
+      const size = stat.size;
+      const fd = fs.openSync(resolved, 'r');
+      let buf;
+      try {
+        const want = Math.min(size, LIMIT);
+        buf = Buffer.alloc(want);
+        fs.readSync(fd, buf, 0, want, 0);
+      } finally { try { fs.closeSync(fd); } catch {} }
+      // A NUL byte in the first 8 KiB is the cheap, reliable "this is binary" test.
+      const probe = buf.subarray(0, Math.min(buf.length, 8192));
+      const binary = probe.includes(0);
+      const name = path.basename(resolved);
+      const ext = path.extname(resolved).slice(1).toLowerCase();
+      json(res, 200, {
+        ok: true,
+        path: resolved,
+        name,
+        ext,
+        size,
+        truncated: size > LIMIT,
+        binary,
+        text: binary ? '' : buf.toString('utf8'),
+      });
+      return;
+    }
+
+    /**
+     * Resolve a bare `name.ext:line` reference to a real path under the cwd.
+     *
+     * Model prose cites files as `SysM.c:236` with no directory, so the viewer
+     * has to look the name up. Bounded walk, heavy folders skipped, and the
+     * result cached per name for the life of the process.
+     */
+    if (req.method === 'POST' && p === '/api/find-file') {
+      const body = await readBody(req).catch(() => ({}));
+      const name = String(body.name || '').trim();
+      if (!name || /[\\/]/.test(name) || name.length > 200) throw httpError('无效的文件名');
+      const cache = findFileCache;
+      const key = name.toLowerCase();
+      if (cache.has(key)) return json(res, 200, { path: cache.get(key) });
+      const base = path.resolve(settings.cwd || HERE);
+      const skip = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'target', '.venv', '__pycache__']);
+      const matches = [];
+      let visited = 0;
+      const walk = (dir, depth) => {
+        if (visited > 60000 || matches.length > 8 || depth > 12) return;
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries){
+          if (visited++ > 60000) return;
+          if (e.isDirectory()){
+            if (skip.has(e.name)) continue;
+            walk(path.join(dir, e.name), depth + 1);
+          } else if (e.isFile() && e.name.toLowerCase() === key){
+            matches.push(path.join(dir, e.name));
+            if (matches.length > 8) return;
+          }
+        }
+      };
+      walk(base, 0);
+      // Prefer the shallowest match: nearest to the root is usually the intended one.
+      matches.sort((a, b) => a.split(path.sep).length - b.split(path.sep).length);
+      const found = matches[0] || '';
+      if (found) cache.set(key, found);
+      json(res, 200, { path: found, alternatives: matches.slice(1, 5) });
       return;
     }
 

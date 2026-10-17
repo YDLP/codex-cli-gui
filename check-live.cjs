@@ -45,6 +45,12 @@ const read = (p) => new Promise((res, rej) => {
     ['the diff is built from text nodes only', /function diffNode/],
     ['diff lines are coloured by kind', /pre\.diff \.dl\.add/],
     ['paths are shown relative to the working directory', /function shortPath/],
+    // In-page file viewer: references open a panel, not the OS default app.
+    ['the viewer panel exists', /id="fileViewer"/],
+    ['it reads files through the bridge', /function renderFileViewer/],
+    ['non-markdown files get numbered rows', /className = 'fv-l'/],
+    ['a line can be jumped to', /function jumpToViewerLine/],
+    ['the default-app open is still available', /id="fvOpen"/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

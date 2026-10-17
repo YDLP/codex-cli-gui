@@ -54,6 +54,39 @@ test('opening a local path is limited to the working directory',async()=>{
     assert.equal((await post('/api/open-path',{path:outside})).status,403,'paths outside the working directory are refused');
   }finally{try{fs.unlinkSync(outside);}catch{}}
 });
+test('the viewer reads files, but only inside the working directory',async()=>{
+  const settings=await (await fetch(base+'/api/settings')).json();
+  assert.equal((await post('/api/file',{path:'relative.txt'})).status,400,'relative paths are refused');
+  assert.equal((await post('/api/file',{path:path.join(settings.cwd,'nope-xyz.txt')})).status,404,'missing files are refused');
+  const outside=path.join(os.tmpdir(),'codex-gui-view-'+Date.now()+'.txt');
+  fs.writeFileSync(outside,'secret');
+  try{
+    assert.equal((await post('/api/file',{path:outside})).status,403,'paths outside the working directory are refused');
+  }finally{try{fs.unlinkSync(outside);}catch{}}
+
+  const inside=path.join(settings.cwd,'view-probe.txt');
+  fs.writeFileSync(inside,'line one\r\nline two\r\n','utf8');
+  try{
+    const r=await post('/api/file',{path:inside});
+    assert.equal(r.status,200);
+    const body=await r.json();
+    assert.equal(body.ok,true);
+    assert.equal(body.name,'view-probe.txt','the original file name casing is kept');
+    assert.equal(body.binary,false);
+    assert.match(body.text,/line one/);
+  }finally{try{fs.unlinkSync(inside);}catch{}}
+
+  // A bare `file.c:236` reference has no directory, so the page asks for a lookup.
+  const named=path.join(settings.cwd,'find-probe.c');
+  fs.writeFileSync(named,'int main(void){return 0;}\n','utf8');
+  try{
+    const found=await (await post('/api/find-file',{name:'find-probe.c'})).json();
+    assert.equal(found.path,named,'the lookup resolves a bare file name under the cwd');
+    const missing=await (await post('/api/find-file',{name:'definitely-not-here.c'})).json();
+    assert.equal(missing.path,'','an unknown name resolves to nothing');
+    assert.equal((await post('/api/find-file',{name:'../escape'})).status,400,'a name with separators is refused');
+  }finally{try{fs.unlinkSync(named);}catch{}}
+});
 test('cross-origin, non-JSON, and forged Host requests are denied',async()=>{
   assert.equal((await post('/api/settings',{}, {headers:{Origin:'https://example.com','Content-Type':'application/json'}})).status,403);
   assert.equal((await post('/api/settings',{}, {headers:{'Content-Type':'text/plain'}})).status,415);

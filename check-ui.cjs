@@ -480,6 +480,37 @@ async function main(){
     assert.equal(localLink.handler,true,'the local link must be wired to openPath: '+JSON.stringify(localLink));
     assert.match(localLink.title,/00 自测问答\.md/,'the path belongs in the tooltip: '+JSON.stringify(localLink));
     assert.equal(localLink.raw,false,'the raw [..](<..>) syntax must not survive: '+JSON.stringify(localLink));
+
+    // The in-page viewer: clicking a local link must open a read-only panel, not
+    // hand the file to the OS default application.
+    assert.equal(await evaluate("document.getElementById('fileViewer').hidden"),true,
+      'the viewer starts closed');
+    await evaluate(`(() => {
+      const a=[...document.querySelectorAll('#log a.fch-open')].find(function(x){return x.textContent==='sample.txt';});
+      if (a) a.click();
+    })()`);
+    await waitUI("document.getElementById('fileViewer') && !document.getElementById('fileViewer').hidden",8000);
+    const fv=JSON.parse(await evaluate(`JSON.stringify({
+      name:document.getElementById('fvName').textContent,
+      rows:document.querySelectorAll('#fvBody .fv-l').length,
+      firstLine:(document.querySelector('#fvBody .fv-l .fv-t')||{}).textContent,
+      hasCr:/\\r/.test(document.getElementById('fvBody').textContent||'')
+    })`));
+    console.log('       viewer:', JSON.stringify(fv));
+    assert.equal(fv.name,'sample.txt','the viewer shows the file name: '+JSON.stringify(fv));
+    assert.equal(fv.rows,3,'every line gets a numbered row: '+JSON.stringify(fv));
+    assert.equal(fv.firstLine,'first line','the content is the file content: '+JSON.stringify(fv));
+    assert.equal(fv.hasCr,false,'CRLF must be normalised: '+JSON.stringify(fv));
+    // Jump to a line through the header box.
+    await evaluate(`(() => { const i=document.getElementById('fvLine'); i.value='2';
+      i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); })()`);
+    await sleep(200);
+    const jumped=await evaluate("(document.querySelector('#fvBody .fv-l.hl')||{}).dataset ? document.querySelector('#fvBody .fv-l.hl').dataset.n : ''");
+    assert.equal(jumped,'2','the jump box must highlight the requested line: '+jumped);
+    // Esc closes it.
+    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await sleep(200);
+    assert.equal(await evaluate("document.getElementById('fileViewer').hidden"),true,'Esc closes the viewer');
     assert.equal(r.injected,0,'model output must not create any element: '+md);
     assert.equal(r.xssRan,0,'the injection payload must never execute');
     assert.equal(r.payloadVisible,true,'the payload stays visible as literal text');
