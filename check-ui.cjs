@@ -459,11 +459,14 @@ async function main(){
     const localLink=JSON.parse(await evaluate(`(() => {
       const a=[...document.querySelectorAll('#log .bubble.md a')].find(x=>x.textContent==='查看文档');
       return JSON.stringify({found:!!a, href:a?a.getAttribute('href'):null, title:a?a.title:'',
+        handler:!!(a && a.classList.contains('fch-open')),
         raw:(document.getElementById('log').textContent||'').includes('](<')});
     })()`));
     console.log('       local path link:', JSON.stringify(localLink));
     assert.equal(localLink.found,true,'[text](<path with space>) must render as an anchor: '+JSON.stringify(localLink));
-    assert.equal(localLink.href,null,'a local path must not become an href: '+JSON.stringify(localLink));
+    // It looks like a link, so it must behave like one: clicking calls the bridge.
+    assert.equal(localLink.href,'#','a local path is handled by the bridge, not a navigation: '+JSON.stringify(localLink));
+    assert.equal(localLink.handler,true,'the local link must be wired to openPath: '+JSON.stringify(localLink));
     assert.match(localLink.title,/00 自测问答\.md/,'the path belongs in the tooltip: '+JSON.stringify(localLink));
     assert.equal(localLink.raw,false,'the raw [..](<..>) syntax must not survive: '+JSON.stringify(localLink));
     assert.equal(r.injected,0,'model output must not create any element: '+md);
@@ -664,9 +667,12 @@ async function main(){
     assert.deepEqual(replayed.added,['+BETA'],'added lines: '+JSON.stringify(replayed));
     assert.deepEqual(replayed.removed,['-beta'],'removed lines: '+JSON.stringify(replayed));
     assert.equal(replayed.hunks,1,'the @@ hunk header must render: '+JSON.stringify(replayed));
-    // A card that carries a diff opens itself: the diff is the whole point, and
-    // burying it behind two clicks is what made it look like nothing rendered.
-    assert.equal(replayed.folded,true,'a replayed card with a diff opens: '+JSON.stringify(replayed));
+    // Folded by default, like every other card; the "+N -N" in the summary is
+    // what tells you a diff is inside.
+    assert.equal(replayed.folded,false,'a replayed card is folded by default: '+JSON.stringify(replayed));
+    const stat=(await evaluate("(document.querySelector('#log details.filechg .fch-stat')||{}).textContent"))||'';
+    console.log('       summary stats:', JSON.stringify(stat));
+    assert.match(stat,/^\+\d+ −\d+$/,'the folded summary must show +N -N: '+JSON.stringify(stat));
     // Restore the sidebar fixture for the checks that follow.
     await evaluate("__test.realHistory=false");
     await evaluate(`__test.sessions=${JSON.stringify([

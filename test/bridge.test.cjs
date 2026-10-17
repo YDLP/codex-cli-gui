@@ -42,6 +42,18 @@ test('malformed JSON and invalid options fail before spawning a process',async()
   assert.equal((await post('/api/run',{prompt:'hello',cwd:temp,resumeThreadId:'--last'})).status,400);
   assert.equal((await (await fetch(base+'/api/health')).json()).running,0);
 });
+test('opening a local path is limited to the working directory',async()=>{
+  // The path comes from model output; the endpoint must not be a way to launch
+  // arbitrary things on disk.
+  const settings=await (await fetch(base+'/api/settings')).json();
+  assert.equal((await post('/api/open-path',{path:'relative.txt'})).status,400,'relative paths are refused');
+  assert.equal((await post('/api/open-path',{path:path.join(settings.cwd,'nope-xyz.txt')})).status,404,'missing files are refused');
+  const outside=path.join(os.tmpdir(),'codex-gui-outside-'+Date.now()+'.txt');
+  fs.writeFileSync(outside,'x');
+  try{
+    assert.equal((await post('/api/open-path',{path:outside})).status,403,'paths outside the working directory are refused');
+  }finally{try{fs.unlinkSync(outside);}catch{}}
+});
 test('cross-origin, non-JSON, and forged Host requests are denied',async()=>{
   assert.equal((await post('/api/settings',{}, {headers:{Origin:'https://example.com','Content-Type':'application/json'}})).status,403);
   assert.equal((await post('/api/settings',{}, {headers:{'Content-Type':'text/plain'}})).status,415);

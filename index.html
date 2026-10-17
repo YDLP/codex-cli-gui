@@ -671,6 +671,24 @@
     if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
     return data;
   }
+
+  /**
+   * Ask the bridge to open a local file in its default application.
+   *
+   * The bridge refuses anything outside the configured working directory, since
+   * these paths come from model output.
+   */
+  async function openLocalPath(target){
+    try {
+      await requestJSON('/api/open-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: target }),
+      });
+    } catch (e) {
+      addError('无法打开「' + target + '」：' + (e.message || '未知错误'));
+    }
+  }
   function updateSendState(){
     $('btnSend').disabled = !ready || busy || historyLoading || pendingFiles > 0;
   }
@@ -1175,10 +1193,18 @@
         if (href.startsWith('<') && href.endsWith('>')) href = href.slice(1, -1);
         if (/^https?:\/\//i.test(href)){
           a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
-        } else {
-          // A local path. Not clickable from the browser, but show it on hover
-          // instead of dumping the raw [text](<path>) syntax into the transcript.
-          a.title = href;
+        } else if (href){
+          // A local path. It LOOKS like a link, so it must behave like one:
+          // clicking asks the bridge to open it in the default application. A
+          // blue underlined element that does nothing was reported as a fake
+          // button, which is a fair complaint.
+          a.href = '#';
+          a.title = href + '\n点击用默认程序打开';
+          a.classList.add('fch-open');
+          a.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            openLocalPath(href);
+          });
         }
         parent.appendChild(a);
       } else {
@@ -1767,8 +1793,8 @@
       const wasOpen = card.open;
       card.replaceWith(rebuilt);
       turnFileCards[i] = rebuilt;
-      // Now that the diff is here, reveal it unless the user folded the card.
-      programmaticOpen(rebuilt, card.dataset.userOpened === '0' ? false : (wasOpen || !!rebuilt.querySelector('pre.diff')));
+      // Keep whatever the user had: the diff arriving must not pop the card open.
+      programmaticOpen(rebuilt, wasOpen);
       rebuilt.addEventListener('toggle', () => {
         if (consumeScripted(rebuilt)) return;
         setUserOpened(rebuilt, rebuilt.open);
@@ -1799,7 +1825,7 @@
       d.dataset.id = item.id || '';
       if (slot >= 0) turnFileCards[slot] = d; else turnFileCards.push(d);
       if (previous.dataset.userOpened === '1') setUserOpened(d, true);
-      programmaticOpen(d, wasOpen || !!d.querySelector('pre.diff'));
+      programmaticOpen(d, wasOpen);   // a card the user opened stays open
     } else {
       d.dataset.id = item.id || '';
       insertBeforeAgentRow(d);
@@ -1807,7 +1833,9 @@
       // A diff is the whole point of the card, so show it. A card with no diff
       // yet (live, before turn.completed fills it in) stays folded to keep the
       // transcript calm.
-      programmaticOpen(d, !!d.querySelector('pre.diff'));
+      // Folded by default, like every other card. The summary carries "+N −N",
+      // so the presence of a diff is visible without opening anything.
+      programmaticOpen(d, false);
     }
     if (item.id) commandCards.set(item.id, d);
     d.addEventListener('toggle', () => {

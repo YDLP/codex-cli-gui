@@ -745,6 +745,37 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    /**
+     * Open a local file in the OS default application.
+     *
+     * The page renders links like `[查看文档](<E:/dir/doc.md>)` for files Codex
+     * touched. Rendering them as plain blue links that do nothing was reported as
+     * "a fake button", so they either work or they are not links.
+     *
+     * Guard rail: only paths inside the configured working directory. The URL
+     * comes from model output, so without that a reply could make the user open
+     * anything on the disk.
+     */
+    if (req.method === 'POST' && p === '/api/open-path') {
+      const body = await readBody(req).catch(() => ({}));
+      const target = String(body.path || '');
+      if (!target || !path.isAbsolute(target)) throw httpError('只能打开绝对路径');
+      let stat;
+      try { stat = fs.statSync(target); } catch { throw httpError('文件不存在：' + target, 404); }
+      if (!stat.isFile() && !stat.isDirectory()) throw httpError('不支持的类型');
+      const norm = (s) => (process.platform === 'win32' ? path.resolve(s).toLowerCase() : path.resolve(s));
+      const base = norm(settings.cwd || HERE);
+      const resolved = norm(target);
+      if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+        throw httpError('只能打开工作目录内的文件：' + target, 403);
+      }
+      const child = spawn('cmd', ['/c', 'start', '', resolved], { windowsHide: true, stdio: 'ignore' });
+      child.on('error', () => {});
+      child.unref();
+      json(res, 200, { ok: true });
+      return;
+    }
+
     if (req.method === 'POST' && p === '/api/run') {
       const body = await readBody(req, MAX_RUN_BODY_BYTES);
       const value = (key, fallback = '') => Object.hasOwn(body, key) ? body[key] : fallback;
