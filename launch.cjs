@@ -18,11 +18,68 @@ const STATE_DIR = path.join(__dirname, '.codex-gui');
 const LOG_FILE = path.join(STATE_DIR, 'bridge.log');
 const PID_FILE = path.join(STATE_DIR, 'bridge.pid');
 
+/**
+ * Find the executable registered to handle http(s) links.
+ *
+ * Returns `{ exe, chromium }` or null. Chromium-family browsers are worth
+ * detecting separately: launching them with `--new-window` guarantees a visible
+ * window, whereas re-opening an already-open URL can just reload the existing tab
+ * and leave a minimised window minimised -- measured as "double-click does
+ * nothing", even though a request does reach the server.
+ */
+function defaultBrowser() {
+  if (process.platform !== 'win32') return null;
+  try {
+    const { execFileSync } = require('node:child_process');
+    const reg = (...args) => execFileSync('reg', args, { encoding: 'utf8', windowsHide: true, timeout: 4000 });
+    // A named value: `reg query <key> /v <name>`.
+    const namedValue = (key, name) => {
+      const out = reg('query', key, '/v', name);
+      const m = out.match(new RegExp(name + '\\s+REG_SZ\\s+(.+)', 'i'));
+      return m ? m[1].trim() : '';
+    };
+    // The DEFAULT value needs /ve; /v "(Default)" does not work.
+    const defaultValue = (key) => {
+      const out = reg('query', key, '/ve');
+      const m = out.match(/REG_SZ\s+(.+)/i);
+      return m ? m[1].trim() : '';
+    };
+    const progId = namedValue('HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice', 'ProgId');
+    if (!progId) return null;
+    const raw = defaultValue('HKCR\\' + progId + '\\shell\\open\\command');
+    if (!raw) return null;
+    const exeMatch = raw.match(/^"([^"]+\.exe)"/i) || raw.match(/^([^\s]+\.exe)/i);
+    if (!exeMatch) return null;
+    const exe = exeMatch[1];
+    if (!fs.existsSync(exe)) return null;
+    const chromium = /(msedge|chrome|brave|vivaldi|chromium)\.exe$/i.test(exe);
+    return { exe, chromium };
+  } catch {
+    return null;
+  }
+}
+
 function openBrowser(url) {
   let child;
-  if (process.platform === 'win32') child = spawn('cmd', ['/c','start','',url], {windowsHide:true,stdio:'ignore'});
-  else child = spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], {stdio:'ignore'});
-  child.on('error', error => console.warn('Open this URL in your browser: '+url+' ('+error.message+')'));
+  if (process.platform === 'win32') {
+    const browser = defaultBrowser();
+    if (browser && browser.chromium){
+      // A new window is visible even when the browser is minimised or already
+      // showing the same URL in a background tab.
+      child = spawn(browser.exe, ['--new-window', url], { windowsHide: false, stdio: 'ignore' });
+      logAttempt('opening browser (new window): ' + browser.exe);
+    } else {
+      child = spawn('cmd', ['/c','start','',url], {windowsHide:true,stdio:'ignore'});
+      logAttempt('opening browser (start): ' + (browser ? browser.exe : 'shell default'));
+    }
+  } else {
+    child = spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], {stdio:'ignore'});
+    logAttempt('opening browser: ' + (process.platform === 'darwin' ? 'open' : 'xdg-open'));
+  }
+  child.on('error', error => {
+    logAttempt('FAIL  could not open a browser: ' + error.message);
+    console.warn('Open this URL in your browser: '+url+' ('+error.message+')');
+  });
   child.unref();
 }
 
@@ -51,6 +108,21 @@ function startDetached() {
   return child.pid;
 }
 
+/**
+ * Append one line to .codex-gui/launch.log.
+ *
+ * When the desktop shortcut runs this file through wscript there is NO console,
+ * so anything printed here is discarded -- "I double-clicked and nothing
+ * happened" then has no evidence at all. Every exit path records its outcome.
+ */
+function logAttempt(message) {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace('T', ' ').replace('Z', '');
+    fs.appendFileSync(path.join(STATE_DIR, 'launch.log'), `launcher  ${stamp}  ${message}\n`, 'utf8');
+  } catch { /* logging must never break launching */ }
+}
+
 async function main() {
   const port = Number(process.env.CODEX_GUI_PORT || 8790);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('CODEX_GUI_PORT must be between 1 and 65535');
@@ -63,10 +135,13 @@ async function main() {
     if (!response.ok || !health?.ok || !health.capabilities?.sessions) throw new Error('Port '+port+' is occupied by another application');
     if (!health.capabilities.scopedStop) console.log('An older Codex GUI is running. Finish its task, close its console, then launch again.');
     else console.log('Codex GUI '+(health.version||'')+' is already running: '+url);
+    logAttempt('already running pid=' + (health.pid ?? '?') + ' -> opening browser');
     if (process.env.CODEX_GUI_NO_BROWSER !== '1') openBrowser(url);
+    else logAttempt('CODEX_GUI_NO_BROWSER=1 -> browser NOT opened');
     return;
   }
   codexInvocation([]); // fail with actionable installation guidance before spawning
+  logAttempt('no service on :' + port + ' -> starting a detached bridge');
 
   if (DETACH) {
     startDetached();
@@ -82,8 +157,10 @@ async function main() {
       await new Promise((r) => setTimeout(r, 120));
     }
     if (!ok) {
+      logAttempt('FAIL  the detached service never became healthy');
       throw new Error('背景服务没有启动成功。请看日志：' + LOG_FILE);
     }
+    logAttempt('service is up -> opening browser');
     if (process.env.CODEX_GUI_NO_BROWSER !== '1') openBrowser(url);
     return;
   }
@@ -92,4 +169,10 @@ async function main() {
   child.on('error',error=>{console.error(error.message);process.exitCode=1;});
   child.on('close',code=>{process.exitCode=code??1;});
 }
-if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});
+if(require.main===module) main().catch(error => {
+  logAttempt('FAIL  ' + error.message);
+  console.error(error.message);
+  process.exitCode = 1;
+});
+
+module.exports = { defaultBrowser, logAttempt };

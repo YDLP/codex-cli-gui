@@ -220,6 +220,67 @@ exec ... resume <id> --json --skip-git-repo-check -m gpt-6.1-sol -c model_reason
 
 **不确定时不要问模型**——看这个提示，或看 bridge 的 `meta.args`。
 
+### ⛔ 双击「完全没反应」——Windows 不让后台进程抢焦点
+
+用户报告桌面快捷方式双击没反应。查下来**一切机制都是好的**：
+
+| 检查 | 结果 |
+|---|---|
+| 服务 | 健康，`/api/health` 正常 |
+| 页面 | HTTP 200，完整 HTML |
+| VBS | `cscript` 跑无错误 |
+| `cmd /c start` | **实测浏览器确实收到了请求**（起了个临时 HTTP 服务端点，能看到命中） |
+| 默认浏览器 | Edge，关联正常 |
+| node | 在 PATH 里 |
+
+**真正原因**：Windows 的**前台锁**。后台进程（wscript → node）启动的浏览器窗口
+**能创建，但拿不到前台焦点**，于是开在用户当前窗口的后面 —— 肉眼就是"什么都没发生"。
+
+用 `EnumWindows` + `GetForegroundWindow` 实测：
+
+```
+before: probe 和另外 6 个页面 - Microsoft Edge
+launch wscript...
+after : probe 和另外 6 个页面 - Microsoft Edge     ← 完全没变
+```
+
+而窗口列表里确实多了一个 `Codex GUI - Microsoft Edge` —— **窗口在，只是不在前台**。
+
+#### 修法：开新窗口 + 主动激活
+
+1. `launch.cjs` 从注册表解析默认浏览器；Chromium 系用 `--new-window` 启动，
+   **保证是一个独立窗口**（否则 Edge 只会在已有窗口里加一个后台标签）
+2. `start-hidden.vbs` 启动后**轮询 `sh.AppActivate("Codex GUI")`**（最多 15 秒），
+   把那个窗口调到前台
+
+实测结果：
+
+```
+opening browser (new window): msedge.exe
+focused the Codex GUI window after 500 ms
+foreground: Codex GUI - 个人 - Microsoft Edge      ← 成功
+```
+
+#### 顺带补上的诊断能力（这才是最大的收获）
+
+`wscript` 没有控制台，`launch.cjs` 里所有 `console.log` / 异常**全部消失**。所以
+"双击没反应"根本无从查起。现在两处都写 `.codex-gui/launch.log`：
+
+```
+2026/10/17 16:11:34  start  node=D:\nodejs\node.exe
+launcher  08:11:34.901  already running pid=23888 -> opening browser
+launcher  08:11:34.938  opening browser (new window): msedge.exe
+2026/10/17 16:11:34  focused the Codex GUI window after 500 ms
+```
+
+VBS 还补了 node 的 4 级查找（`CODEX_GUI_NODE` → PATH → 常见安装目录 → 注册表），
+原来只扫 PATH。
+
+> ⚠️ `reg query` 取**默认值**必须用 `/ve`，用 `/v (Default)` 会报"找不到指定的注册表项或值"，
+> 然后被 catch 吞掉 → 静默返回 null。这个坑让浏览器检测白白失效一次。
+>
+> ⚠️ 我改 VBS 时一度用了未定义的 `StripSlash`，属自造 bug，已修并验证。
+
 ### ✅ 文件改动现在会显示 diff 了
 
 用户最初把它列为「最大的洞」：Codex 改了文件，界面什么都不显示。实现时才发现真正麻烦的地方。

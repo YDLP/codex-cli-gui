@@ -66,6 +66,16 @@ That reports what it stopped and which port was released. It refuses to kill a
 process that merely happens to own the port — the holder must actually be
 `bridge.cjs`.
 
+**The browser is opened in a new window and brought to the front.** That detail
+matters: Windows does not let a background process steal focus, so without an
+explicit activation the window opens *behind* whatever you are looking at, which
+looks exactly like "double-clicking does nothing".
+
+**If double-clicking ever appears to do nothing**, read `.codex-gui/launch.log`.
+`wscript` has no console, so the launcher writes every attempt there — which
+Node it found, whether the service was already running, which browser it opened,
+and whether it managed to focus it.
+
 ### Run it in the foreground
 
 `start-codex-gui.cmd` (or `node launch.cjs`) keeps the service attached to its

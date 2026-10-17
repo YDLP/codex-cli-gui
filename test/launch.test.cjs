@@ -17,6 +17,21 @@ test('launcher rejects invalid ports without invoking a shell',async()=>{
   const result=await launch({CODEX_GUI_PORT:'bad-port'}).done;
   assert.equal(result.code,1);assert.match(result.output,/between 1 and 65535/);
 });
+test('the registered browser is resolved without throwing', async () => {
+  // Regression: the first version queried the DEFAULT registry value with
+  // `/v (Default)`, which reg.exe does not accept, so detection silently returned
+  // null and every launch fell back to a code path that never focuses the window.
+  const { defaultBrowser } = require('../launch.cjs');
+  const b = defaultBrowser();
+  if (b === null) {
+    // No association (or not Windows): acceptable, but it must not throw.
+    assert.equal(b, null);
+  } else {
+    assert.equal(typeof b.exe, 'string');
+    assert.ok(fs.existsSync(b.exe), 'the resolved browser must exist: ' + b.exe);
+    assert.equal(typeof b.chromium, 'boolean');
+  }
+});
 test('launcher does not reuse a listener that is not a GUI',async()=>{
   const listener=http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end('{"ok":true}');});
   await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));
