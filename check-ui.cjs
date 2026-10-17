@@ -269,9 +269,12 @@ async function main(){
     assert.equal(await evaluate("$test('btnNew').disabled"),true);
     await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled");
     assert.equal(await evaluate('__test.runCalls'),1);
-    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd').length"),5,
-      'three commands, one web search and one file change');
-    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group').length"),1);
+    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd').length"),4,
+      'three commands and one web search (file changes are their own kind)');
+    assert.equal(await evaluate("document.querySelectorAll('#log details.filechg').length"),1,
+      'exactly one file-change card');
+    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group').length"),1,
+      'exactly one tool group');
     assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group .grp-body details.cmd').length"),4,
       'the web search must fold into the same group as the commands (the file change is standalone now)');
     assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group .grp-body details.cmd.web').length"),1);
@@ -279,6 +282,9 @@ async function main(){
     const fch=JSON.parse(await evaluate(`JSON.stringify({
       cards:document.querySelectorAll('#log details.filechg').length,
       inGroup:document.querySelectorAll('#log details.cmd-group details.filechg').length,
+      inFileGroup:document.querySelectorAll('#log details.fch-group details.filechg').length,
+      fileGroups:document.querySelectorAll('#log details.fch-group').length,
+      fileGroupHeader:(document.querySelector('#log details.fch-group > summary')||{}).textContent||'',
       rows:document.querySelectorAll('#log details.filechg .fch-head').length,
       kinds:[...document.querySelectorAll('#log details.filechg .fch-head .pill')].map(function(x){return x.textContent;}),
       paths:[...document.querySelectorAll('#log details.filechg .fch-head code')].map(function(x){return x.textContent;}),
@@ -287,7 +293,12 @@ async function main(){
       xss:!!window.__xss})`));
     console.log('       file change (live):', JSON.stringify(fch));
     assert.equal(fch.cards,1,'a file change must render one card: '+JSON.stringify(fch));
-    assert.equal(fch.inGroup,0,'the file change must be its own card, not inside the tool group: '+JSON.stringify(fch));
+    // Nested in its OWN group, mirroring the tool group -- not loose in the
+    // transcript and not mixed into the tools.
+    assert.equal(fch.inGroup,0,'file changes must not be inside the tool group: '+JSON.stringify(fch));
+    assert.equal(fch.fileGroups,1,'there must be one file group per turn: '+JSON.stringify(fch));
+    assert.equal(fch.inFileGroup,1,'the card must be nested in the file group: '+JSON.stringify(fch));
+    assert.match(fch.fileGroupHeader,/文件/,'the file group header: '+JSON.stringify(fch));
     assert.equal(fch.rows,3,'one row per changed path: '+JSON.stringify(fch));
     assert.deepEqual(fch.kinds,['修改','新增','删除'],'kind labels: '+JSON.stringify(fch));
     // A path containing a script tag must be TEXT, never markup.
@@ -546,12 +557,14 @@ async function main(){
     assert.equal(G.rows,4,'every command and web search must be listed inside the group: '+grp);
     assert.equal(G.open,false,'the group must fold when the turn ends: '+grp);
     assert.match(G.header,/4 条/,'the header must state how many tools ran: '+grp);
-    // The file change is deliberately NOT a tool here: it is its own card, so it
-    // must not appear in the group nor in its count.
+    // File changes live in their own group, so they must not inflate the tool
+    // count nor appear inside the tool group.
     assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group details.filechg').length"),0,
-      'the file change must stay out of the tool group: '+grp);
-    assert.equal(await evaluate("document.querySelectorAll('#log details.filechg').length"),1,
-      'exactly one standalone file-change card: '+grp);
+      'file changes must stay out of the tool group: '+grp);
+    assert.equal(await evaluate("document.querySelectorAll('#log details.fch-group details.filechg').length"),1,
+      'file changes must be nested in their own group: '+grp);
+    assert.equal(await evaluate("document.querySelectorAll('#log details.fch-group').length"),1,
+      'exactly one file group per turn: '+grp);
     // A card the user opens by hand opts out of the automatic collapse: simulate
     // the manual open and confirm the guard is recorded (that flag is what
     // collapseToolCards() skips on a later turn).

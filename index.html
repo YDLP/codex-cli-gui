@@ -181,26 +181,28 @@
   .turn .reason-line{display:flex; flex-direction:column; gap:6px}
   .turn .reason-line > .who{color:var(--dim)}
 
-  /* ---- grouped command card (one per turn) ---- */
-  details.cmd-group{
+  /* ---- grouped command card (one per turn) ----
+     `details.fch-group` is the file-change group: same look, separate kind, so
+     `details.cmd-group` keeps meaning "the tool group" everywhere. */
+  details.cmd-group, details.fch-group{
     border:1px solid var(--line); border-radius:8px; background:var(--panel);
     overflow:hidden; margin-bottom:6px;
   }
-  details.cmd-group > summary{
+  details.cmd-group > summary, details.fch-group > summary{
     cursor:pointer; padding:8px 12px; font-size:12.5px; color:var(--dim);
     display:flex; align-items:center; gap:8px; user-select:none;
   }
-  details.cmd-group > summary:hover{background:var(--panel2)}
-  details.cmd-group > summary::after{
+  details.cmd-group > summary:hover, details.fch-group > summary:hover{background:var(--panel2)}
+  details.cmd-group > summary::after, details.fch-group > summary::after{
     content:'▸'; margin-left:auto; color:var(--dim); font-size:11px;
     transition:transform .12s ease;
   }
-  details.cmd-group[open] > summary::after{content:'▾'}
+  details.cmd-group[open] > summary::after, details.fch-group[open] > summary::after{content:'▾'}
   .grp-count{color:var(--fg); font-weight:600}
   .grp-body{padding:8px; display:flex; flex-direction:column; gap:6px; background:var(--panel2)}
-  /* Nested command rows read as a list, not as separate cards. */
-  .grp-body details.cmd{border-radius:6px}
-  .grp-body details.cmd > summary{padding:6px 10px}
+  /* Nested command/file rows read as a list, not as separate cards. */
+  .grp-body details.cmd, .grp-body details.filechg{border-radius:6px}
+  .grp-body details.cmd > summary, .grp-body details.filechg > summary{padding:6px 10px}
 
   /* ---- divider between exchanges ---- */
   .turn-sep{
@@ -269,26 +271,26 @@
   }
   .md-copy:hover{color:var(--fg); border-color:var(--accent)}
   .md-copy.done{color:var(--ok); border-color:var(--ok)}
-  details.cmd, details.think{
+  details.cmd, details.filechg, details.think{
     border-radius:8px; overflow:hidden;
   }
-  details.cmd{border:1px solid var(--line); background:var(--panel)}
+  details.cmd, details.filechg{border:1px solid var(--line); background:var(--panel)}
   details.think{border:1px solid var(--thinkbd); background:var(--thinkbg)}
-  details.cmd summary, details.think summary{
+  details.cmd summary, details.filechg summary, details.think summary{
     cursor:pointer; padding:8px 12px; font-size:12.5px; color:var(--dim);
     display:flex; align-items:center; gap:8px; user-select:none;
   }
   details.think summary{color:var(--thinkfg); font-style:italic}
-  details.cmd summary:hover{background:var(--panel2)}
+  details.cmd summary:hover, details.filechg summary:hover{background:var(--panel2)}
   details.think summary:hover{filter:brightness(1.06)}
   /* An explicit affordance, so it is obvious the card expands. */
-  details.cmd summary::after{
+  details.cmd summary::after, details.filechg summary::after{
     content:'▸'; margin-left:auto; color:var(--dim); font-size:11px;
     transition:transform .12s ease;
   }
-  details.cmd[open] summary::after{content:'▾'}
+  details.cmd[open] summary::after, details.filechg[open] summary::after{content:'▾'}
   /* A short echo of the command while folded; the full text lives in the body. */
-  details.cmd summary .cmd-peek{
+  details.cmd summary .cmd-peek, details.filechg summary .cmd-peek{
     color:var(--fg); font:12px/1.4 "Cascadia Mono",Consolas,monospace;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0;
   }
@@ -314,9 +316,8 @@
     flex:none; font:11px/1.4 "Cascadia Mono",Consolas,monospace;
     color:var(--dim); white-space:nowrap;
   }
-  /* A file change stands alone in the transcript, not inside the tool group. */
-  .fch-card{border-radius:6px; overflow:hidden}
-  .fch-card > summary .cmd-peek{color:var(--fg)}
+  /* A file change is nested in its own group; its name reads like a tool's. */
+  details.filechg > summary .cmd-peek{color:var(--fg)}
   /* Unified diff. Structural characters live in the text; only colour is CSS. */
   pre.diff{padding:6px 0; background:var(--code); overflow-x:auto}
   pre.diff .dl{
@@ -786,6 +787,7 @@
   function resetTurnView(){
     dropAgentRowIfEmpty();
     stopToolGroup();
+    stopFileGroup();
     currentThinking = null;
   }
 
@@ -811,6 +813,7 @@
     // card is appended when the turn began.
     resetAgentRow();
     stopToolGroup();
+    stopFileGroup();
     clearTurnCards();
     turnCounter++;
     // Divider FIRST, then the prompt: the label opens the exchange it belongs to.
@@ -1498,7 +1501,7 @@
 
   function collapseToolCards(){
     collapsingToolCards = true;
-    for (const d of log.querySelectorAll('details.cmd, details.cmd-group')){
+    for (const d of log.querySelectorAll('details.cmd, details.cmd-group, details.filechg, details.fch-group')){
       if (!d.open) continue;
       if (d.dataset.userOpened === '1') continue;
       programmaticOpen(d, false);
@@ -1517,6 +1520,11 @@
   let toolGroupBox = null;
   let toolGroupCount = 0;
 
+  /** File changes get their OWN group, parallel to the tool group. */
+  let fileGroup = null;
+  let fileGroupBox = null;
+  let fileGroupCount = 0;
+
   function setUserOpened(d, on){
     if (on) d.dataset.userOpened = '1'; else delete d.dataset.userOpened;
   }
@@ -1525,6 +1533,64 @@
     toolGroup = null; toolGroupBox = null; toolGroupCount = 0;
     // A new turn starts expanded again; the "user closed it" state belongs to the
     // turn it was set in.
+  }
+
+  function stopFileGroup(){
+    fileGroup = null; fileGroupBox = null; fileGroupCount = 0;
+  }
+
+  /**
+   * The turn's file-change group -- the same nested shape as the tool group, so a
+   * turn reads as "工具 N 条" + "文件 N 个" instead of one loose card floating in
+   * the transcript.
+   *
+   * The summary carries the combined +N -N, so a folded group still says whether
+   * anything actually changed.
+   */
+  function ensureFileGroup(){
+    if (fileGroup && fileGroup.isConnected) return fileGroup;
+    fileGroup = document.createElement('details');
+    fileGroup.className = 'fch-group';
+    const s = document.createElement('summary');
+    const label = document.createElement('span');
+    label.className = 'pill';
+    label.textContent = '文件';
+    const count = document.createElement('span');
+    count.className = 'grp-count';
+    const state = document.createElement('span');
+    state.className = 'grp-state';
+    s.appendChild(label); s.appendChild(count); s.appendChild(state);
+    fileGroup.appendChild(s);
+    fileGroupBox = document.createElement('div');
+    fileGroupBox.className = 'grp-body';
+    fileGroup.appendChild(fileGroupBox);
+    fileGroupCount = 0;
+    programmaticOpen(fileGroup, false);
+    fileGroup.addEventListener('toggle', () => {
+      if (consumeScripted(fileGroup)) return;
+      if (fileGroup.open) { setUserOpened(fileGroup, true); delete fileGroup.dataset.userClosed; }
+      else { setUserOpened(fileGroup, false); fileGroup.dataset.userClosed = '1'; }
+    });
+    ensureAgentRow();
+    agentRow.insertBefore(fileGroup, agentBubble);
+    if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) scrollDown();
+    return fileGroup;
+  }
+
+  function refreshFileGroupHeader(){
+    const g = ensureFileGroup();
+    const count = g.querySelector('.grp-count');
+    const state = g.querySelector('.grp-state');
+    count.textContent = fileGroupCount + ' 个';
+    let add = 0, del = 0;
+    for (const card of fileGroupBox.querySelectorAll('details.filechg')){
+      const stat = card.querySelector('.fch-stat');
+      const m = stat && stat.textContent.match(/\+(\d+) −(\d+)/);
+      if (m){ add += Number(m[1]); del += Number(m[2]); }
+    }
+    state.innerHTML = (add || del)
+      ? '<span class="pill ok">+' + add + ' −' + del + '</span>'
+      : '<span class="pill">无 diff</span>';
   }
 
   function ensureToolGroup(){
@@ -1723,7 +1789,9 @@
   function fileChangeBody(item){
     const files = normalizeFileChanges(item);
     const d = document.createElement('details');
-    d.className = 'cmd filechg';
+    // NOT `cmd`: file cards must not be caught by tool-card queries (group counts,
+    // collapse logic). `details.filechg` has its own CSS rules.
+    d.className = 'filechg';
     const s = document.createElement('summary');
     s.innerHTML = '<span class="pill">文件</span>';
     const stats = diffStats(files);
@@ -1788,7 +1856,6 @@
         id: card.dataset.id, type: 'file_change', status: 'completed',
         changes: matched.map((f) => ({ path: f.path, type: f.type, unified_diff: f.unified_diff })),
       });
-      rebuilt.classList.add('fch-card');
       rebuilt.dataset.id = card.dataset.id || '';
       const wasOpen = card.open;
       card.replaceWith(rebuilt);
@@ -1800,20 +1867,19 @@
         setUserOpened(rebuilt, rebuilt.open);
       });
     }
+    if (fileGroup && fileGroup.isConnected) refreshFileGroupHeader();
   }
 
   /**
-   * A file change is its own card, NOT part of the turn's tool group.
+   * One file change, nested inside the turn's FILE group.
    *
-   * It used to live inside the group, which meant two clicks to see a diff (open
-   * the group, then open the card) and it disappeared from view entirely whenever
-   * the group was folded. It now sits in the transcript like a reply-level card,
-   * above the answer, and opens itself when it actually carries a diff.
+   * The group is the same shape as the tool group, so a turn reads as
+   * "工具 N 条" + "文件 N 个". The card itself stays folded like every other card;
+   * its summary carries +N -N and the group summary carries the total.
    */
   function addFileChange(item, replay){
     const previous = item.id && commandCards.get(item.id);
     let d = fileChangeBody(item);
-    d.classList.add('fch-card');
     if (previous && previous.isConnected){
       // `item.started` already created a card; replace it in place AND keep the
       // per-turn index pointing at the live node, otherwise
@@ -1828,13 +1894,10 @@
       programmaticOpen(d, wasOpen);   // a card the user opened stays open
     } else {
       d.dataset.id = item.id || '';
-      insertBeforeAgentRow(d);
+      ensureFileGroup();
+      fileGroupBox.appendChild(d);
+      fileGroupCount++;
       turnFileCards.push(d);
-      // A diff is the whole point of the card, so show it. A card with no diff
-      // yet (live, before turn.completed fills it in) stays folded to keep the
-      // transcript calm.
-      // Folded by default, like every other card. The summary carries "+N −N",
-      // so the presence of a diff is visible without opening anything.
       programmaticOpen(d, false);
     }
     if (item.id) commandCards.set(item.id, d);
@@ -1842,6 +1905,7 @@
       if (consumeScripted(d)) return;
       setUserOpened(d, d.open);
     });
+    refreshFileGroupHeader();
   }
 
   function addCmd(item, replay){
@@ -2262,6 +2326,7 @@
       resetAgentRow();
       ensureAgentRow();
       stopToolGroup();          // this turn gets its own grouped command card
+      stopFileGroup();          // and its own file group
       showThinking(true);
       status('启动 Codex…');
       const resp = await fetch('/api/run', {
@@ -2545,6 +2610,7 @@
         }
       }
       stopToolGroup();
+      stopFileGroup();
       // One bubble per assistant message; close it before the footer note.
       resetAgentRow();
       addMeta('—— 以上为历史记录（共 ' + msgs.length + ' 条），继续发消息即可接着聊 ——');
