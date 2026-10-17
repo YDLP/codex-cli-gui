@@ -482,6 +482,12 @@ function startRun(opts, res) {
         completedTurn.contextWindow = saved.contextWindow;
         completedTurn.model = saved.model;
       } catch { /* retain billed usage; current context remains unknown */ }
+      // The live file_change event carries only paths; the diffs are written to
+      // the rollout afterwards. Ship them with the completion so the open card
+      // can show HOW as soon as the turn ends, without a refresh.
+      try {
+        completedTurn.fileChanges = rollout.readLastTurnFileChanges(run.threadId);
+      } catch { /* the card keeps showing just the paths */ }
       sse('codex', completedTurn);
     }
     running.delete(runId);

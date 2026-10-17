@@ -293,9 +293,16 @@ async function main(){
       'the hostile path must be shown as text: '+JSON.stringify(fch));
     assert.equal(fch.injected,0,'no script element may be created from a path');
     assert.equal(fch.xss,false,'nothing may execute');
-    // MEASURED: the live `codex exec --json` event has no diff content at all, so
-    // the live card legitimately shows none. Diffs appear on replay (next check).
-    assert.equal(fch.diffLines,0,'live file_change events carry no diff: '+JSON.stringify(fch));
+    // MEASURED: the live `codex exec --json` event has no diff content, but the
+    // bridge reads the diffs out of the rollout and ships them with
+    // turn.completed, so by the time the turn is finished the card has them.
+    assert.ok(fch.diffLines > 0,
+      'the bridge must attach the rollout diffs at turn.completed: '+JSON.stringify(fch));
+    const addedLines=JSON.parse(await evaluate(`JSON.stringify(
+      [...document.querySelectorAll('#log details.filechg pre.diff .dl.add')].map(function(x){return x.textContent;}))`));
+    console.log('       diff lines attached at completion:', JSON.stringify(addedLines));
+    assert.ok(addedLines.some((l) => l.includes('+BETA')),
+      'the real diff content must reach the live card: '+JSON.stringify(addedLines));
     // And nothing may be left outside the group as a loose tool line.
     assert.equal(await evaluate("document.querySelectorAll('#log .tool-line').length"),0,
       'no tool activity may render outside the group');

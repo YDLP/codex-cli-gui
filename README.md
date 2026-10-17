@@ -154,11 +154,12 @@ not exist:
   used.
 - **Compaction is inferred, not reported.** `codex exec --json` has no compaction
   event, so the GUI flags a large drop in context usage as "possibly compacted".
-- **A live file change carries no diff.** The live event gives only
-  `changes: [{ path, kind }]`; the `unified_diff` is written to the rollout file
-  separately. So during a turn you see *which* files changed, and the diff itself
-  appears when the session is replayed (a page refresh, or reopening it). Verified
-  against a real turn — this is a property of the event, not a shortcut here.
+- **A live file change carries no diff, but the card gets one at the end of the turn.**
+  The live event gives only `changes: [{ path, kind }]`; the `unified_diff` is
+  written to the rollout file separately. So during a turn you see *which* files
+  changed, and the bridge reads the diffs out of the rollout when the turn closes,
+  shipping them with `turn.completed` — the card fills in without a refresh.
+  Verified against a real turn: this is a property of the event, not a shortcut.
 
 ## Known gaps — good first contributions
 

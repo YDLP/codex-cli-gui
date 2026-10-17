@@ -107,6 +107,11 @@ Codex 发文件改动有**两种不同形状**，两种都会到达界面。这�
 也就是说：**回合进行中只能显示「哪些文件变了」，diff 只存在于回合结束后的 rollout 里。**
 这是事件的固有性质，跑一次真实回合验证过，不是这里的偷懒。
 
+这个缺口在回合结束时补上：`bridge.cjs` 在进程关闭时调用
+`rollout.readLastTurnFileChanges()`，把结果挂到 `turn.completed.fileChanges`；
+界面的 `upgradeFileChangeCards()` 据此重建本轮的卡片。所以路径立刻可见，
+diff 在回合结束那一刻补全，不需要刷新。
+
 流水线：
 
 | 环节 | 做什么 |

@@ -1685,6 +1685,45 @@
     return d;
   }
 
+  /**
+   * Replace this turn's file-change cards with the authoritative rollout data.
+   *
+   * The live `file_change` event says only which paths changed; the diff is
+   * written to the rollout afterwards and the bridge ships it with
+   * turn.completed. Cards are matched by their full path (kept in `title`), so a
+   * card that already had a diff is simply rebuilt with the same content.
+   */
+  function upgradeFileChangeCards(files){
+    if (!toolGroup || !toolGroup.isConnected) return;
+    const byPath = new Map();
+    for (const f of files){
+      if (f && f.path) byPath.set(String(f.path), f);
+    }
+    if (!byPath.size) return;
+    let changed = false;
+    for (const card of [...toolGroup.querySelectorAll('.grp-body details.filechg')]){
+      const paths = [...card.querySelectorAll('.fch-head code')].map((c) => c.title || c.textContent);
+      const matched = paths.map((p) => byPath.get(p)).filter(Boolean);
+      if (!matched.length) continue;
+      if (card.querySelector('pre.diff') && matched.every((m) => !m.unified_diff)) continue;
+      const rebuilt = fileChangeBody({
+        id: card.dataset.id, type: 'file_change', status: 'completed',
+        changes: matched.map((f) => ({ path: f.path, type: f.type, unified_diff: f.unified_diff })),
+      });
+      rebuilt.dataset.exit = '0';
+      rebuilt.dataset.userOpened = card.dataset.userOpened || '';
+      const wasOpen = card.open;
+      card.replaceWith(rebuilt);
+      programmaticOpen(rebuilt, wasOpen);
+      rebuilt.addEventListener('toggle', () => {
+        if (consumeScripted(rebuilt)) return;
+        setUserOpened(rebuilt, rebuilt.open);
+      });
+      changed = true;
+    }
+    if (changed) refreshToolGroupHeader();
+  }
+
   function addFileChange(item, replay){
     const previous = item.id && commandCards.get(item.id);
     const d = fileChangeBody(item);
@@ -2055,6 +2094,8 @@
           updateCtx({ input_tokens:ev.contextUsage.inputTokens, output_tokens:ev.contextUsage.outputTokens,
             cached_input_tokens:ev.contextUsage.cachedInputTokens });
         }
+        // Add the diffs the live events could not carry (see addFileChange).
+        if (Array.isArray(ev.fileChanges)) upgradeFileChangeCards(ev.fileChanges);
         break;
       }
       case 'turn.failed': runFailed = true; addError(ev.error?.message || JSON.stringify(ev.error)); break;

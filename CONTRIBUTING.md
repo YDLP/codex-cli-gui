@@ -130,6 +130,12 @@ So: **during a turn you can only show *which* files changed. The diff exists onl
 after the turn, in the rollout.** That is a property of the event, verified by
 running a real turn — not a shortcut.
 
+That gap is closed at the end of the turn: `bridge.cjs` calls
+`rollout.readLastTurnFileChanges()` when the process closes and attaches the
+result to `turn.completed.fileChanges`; the UI's `upgradeFileChangeCards()` then
+rebuilds the turn's cards from it. So the user sees the paths immediately and the
+diff the moment the turn ends, with no refresh.
+
 The pipeline:
 
 | Stage | What it does |

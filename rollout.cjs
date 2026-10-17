@@ -324,4 +324,65 @@ function readConversation(threadId, { maxMessages = 400, maxChars = 20000 } = {}
   return { messages: trimmed, usage, contextWindow, model, cwd, permissionMode, path: file };
 }
 
-module.exports = { readConversation, findRollout, SESSIONS_DIR };
+/**
+ * File changes recorded for the LAST turn, with their diffs.
+ *
+ * Needed because the live `codex exec --json` event only says which paths
+ * changed -- the `unified_diff` is written to the rollout afterwards. The bridge
+ * calls this when a turn closes so the card can show HOW, not just WHAT, without
+ * waiting for a refresh.
+ *
+ * Deliberately cheap: no message replay, no attachment parsing, capped diff size.
+ */
+function readLastTurnFileChanges(threadId, { maxChars = 20000 } = {}) {
+  const file = findRollout(threadId);
+  if (!file) return [];
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return []; }
+
+  // The turn id is only known once we have seen it, so collect per turn and keep
+  // the last one that actually recorded a file change.
+  let lastTurnId = '';
+  const byTurn = new Map();
+  for (const line of raw.split('\n')) {
+    if (!line.trim() || line.indexOf('FileChange') === -1) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    const p = o.payload;
+    if (!p || p.type !== 'item_completed' || !p.item || p.item.type !== 'FileChange') continue;
+    const turn = String(p.turn_id || '');
+    const files = [];
+    const changes = p.item.changes;
+    if (changes && typeof changes === 'object' && !Array.isArray(changes)) {
+      for (const [path, v] of Object.entries(changes)) {
+        files.push({
+          path,
+          type: String((v && v.type) || 'update'),
+          unified_diff: String((v && v.unified_diff) || ''),
+          move_path: (v && v.move_path) || null,
+        });
+      }
+    } else if (Array.isArray(changes)) {
+      for (const e of changes) {
+        if (!e) continue;
+        files.push({ path: String(e.path || ''), type: String(e.kind || 'update'), unified_diff: '' });
+      }
+    }
+    const keep = files.filter((f) => f.path);
+    if (!keep.length) continue;
+    byTurn.set(turn, keep);
+    lastTurnId = turn;
+  }
+  if (!lastTurnId) return [];
+
+  let used = 0;
+  return byTurn.get(lastTurnId).map((f) => {
+    let diff = f.unified_diff;
+    const room = Math.max(0, maxChars - used);
+    used += diff.length;
+    if (diff.length > room) diff = diff.slice(0, room) + '\n…（已截断）';
+    return { path: f.path, type: f.type, unified_diff: diff };
+  });
+}
+
+module.exports = { readConversation, readLastTurnFileChanges, findRollout, SESSIONS_DIR };
