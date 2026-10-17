@@ -300,6 +300,25 @@
     display:block; font:12px/1.55 "Cascadia Mono",Consolas,monospace;
     color:var(--fg); white-space:pre-wrap; word-break:break-word;
   }
+  /* File change card ------------------------------------------------------- */
+  .fch-head{display:flex; align-items:center; gap:7px}
+  .fch-head code{
+    font:12px/1.4 "Cascadia Mono",Consolas,monospace; white-space:pre-wrap; word-break:break-word;
+  }
+  .fch-head .pill{flex:none}
+  .fch-add{color:var(--ok); border-color:var(--ok)}
+  .fch-delete{color:var(--bad, #d9534f); border-color:var(--bad, #d9534f)}
+  .fch-move{color:var(--accent); border-color:var(--accent)}
+  /* Unified diff. Structural characters live in the text; only colour is CSS. */
+  pre.diff{padding:6px 0; background:var(--code); overflow-x:auto}
+  pre.diff .dl{
+    padding:0 12px; font:12px/1.5 "Cascadia Mono",Consolas,monospace;
+    white-space:pre-wrap; word-break:break-word; color:var(--dim);
+  }
+  pre.diff .dl.add{color:var(--ok); background:rgba(46,160,67,.10)}
+  pre.diff .dl.del{color:var(--bad, #d9534f); background:rgba(248,81,73,.10)}
+  pre.diff .dl.hunk{color:var(--accent); background:var(--panel2); margin:2px 0}
+  pre.diff .dl.meta{color:var(--dim); font-style:italic}
   pre{
     margin:0; padding:11px 13px; background:var(--code); overflow-x:auto;
     font:12.5px/1.55 "Cascadia Mono",Consolas,monospace; white-space:pre-wrap; word-break:break-word;
@@ -737,6 +756,19 @@
     currentThinking = null;
   }
 
+  /**
+   * Drop the in-flight card index when a new exchange begins.
+   *
+   * LIVE item ids are a per-process counter (`item_1`, `item_2`, ...) and each
+   * turn is a NEW `codex exec` process, so the ids repeat every turn. Without
+   * clearing, turn 2's `item_1` matched turn 1's still-connected card and
+   * REPLACED it -- the previous turn's tool card silently lost its contents.
+   * Rollout ids are UUIDs (`exec-...`), so replay never collided.
+   */
+  function clearTurnCards(){
+    commandCards.clear();
+  }
+
   let turnCounter = 0;
 
   function addUser(text, attachments){
@@ -745,6 +777,7 @@
     // card is appended when the turn began.
     resetAgentRow();
     stopToolGroup();
+    clearTurnCards();
     turnCounter++;
     // Divider FIRST, then the prompt: the label opens the exchange it belongs to.
     // Appending it after the message made it read as the tail of the PREVIOUS turn.
@@ -1541,6 +1574,152 @@
     return d;
   }
 
+  /**
+   * A `file_change` item — Codex edited files.
+   *
+   * TWO different shapes arrive, and both must work:
+   *
+   *   live    `changes: [{ path, kind }]`                    <- NO diff content
+   *   rollout `changes: { path: { type, unified_diff } }`    <- has the diff
+   *
+   * Verified against a real turn: the live event carries only which paths changed,
+   * because the diff is written to the rollout separately. So during a turn you
+   * see WHAT changed, and after the turn (or on refresh) you also see HOW.
+   */
+  function normalizeFileChanges(item){
+    const out = [];
+    const c = item && item.changes;
+    if (Array.isArray(c)){
+      for (const e of c){
+        if (!e) continue;
+        out.push({
+          path: String(e.path || ''),
+          // Live uses `kind`; rollout rows produced by rollout.cjs use `type`.
+          kind: String(e.kind || e.type || 'update'),
+          diff: String(e.diff || e.unified_diff || ''),
+        });
+      }
+    } else if (c && typeof c === 'object'){
+      for (const [p, v] of Object.entries(c)){
+        out.push({
+          path: String(p),
+          kind: String((v && v.type) || 'update'),
+          diff: String((v && v.unified_diff) || ''),
+        });
+      }
+    }
+    return out;
+  }
+
+  const FILE_KIND_LABEL = { update: '修改', add: '新增', delete: '删除', move: '移动' };
+
+  /** Show a path relative to the working directory when it sits inside it. */
+  function shortPath(p){
+    const base = (($('cwd') && $('cwd').value.trim()) || settings.cwd || '').replace(/[\\/]+$/, '');
+    if (!base) return p;
+    const norm = (s) => s.replace(/\\/g, '/').toLowerCase();
+    const np = norm(p);
+    const nb = norm(base);
+    if (np === nb) return p;
+    if (np.startsWith(nb + '/')) return p.replace(/\\/g, '/').slice(base.replace(/\\/g, '/').length + 1);
+    return p;
+  }
+
+  /** Render a unified diff as coloured lines. Text only -- never innerHTML. */
+  function diffNode(diff){
+    const pre = document.createElement('pre');
+    pre.className = 'diff';
+    for (const line of diff.split('\n')){
+      const row = document.createElement('div');
+      let cls = 'ctx';
+      // `+++` / `---` are file headers, so test them before the + / - cases.
+      if (line.startsWith('@@')) cls = 'hunk';
+      else if (line.startsWith('+++') || line.startsWith('---')) cls = 'meta';
+      else if (line.startsWith('+')) cls = 'add';
+      else if (line.startsWith('-')) cls = 'del';
+      else if (line.startsWith('\\')) cls = 'meta';
+      row.className = 'dl ' + cls;
+      row.textContent = line === '' ? '\u00a0' : line;
+      pre.appendChild(row);
+    }
+    return pre;
+  }
+
+  function fileChangeBody(item){
+    const files = normalizeFileChanges(item);
+    const d = document.createElement('details');
+    d.className = 'cmd filechg';
+    const s = document.createElement('summary');
+    const st = item.status === 'completed' || item.status === 'in_progress'
+      ? '<span class="pill">文件</span>'
+      : '<span class="pill">文件</span>';
+    s.innerHTML = st;
+    const peek = document.createElement('span');
+    peek.className = 'cmd-peek';
+    peek.textContent = files.length
+      ? files.map((f) => (FILE_KIND_LABEL[f.kind] || f.kind) + ' ' + shortPath(f.path)).join('、')
+      : '（无变化信息）';
+    s.appendChild(peek);
+    d.appendChild(s);
+
+    for (const f of files){
+      const head = document.createElement('div');
+      head.className = 'cmd-line fch-head';
+      const kind = document.createElement('span');
+      kind.className = 'pill fch-' + (FILE_KIND_LABEL[f.kind] ? f.kind : 'update');
+      kind.textContent = FILE_KIND_LABEL[f.kind] || f.kind;
+      const code = document.createElement('code');
+      code.textContent = shortPath(f.path);
+      code.title = f.path;                       // full path on hover
+      head.appendChild(kind);
+      head.appendChild(code);
+      d.appendChild(head);
+      if (f.diff) d.appendChild(diffNode(f.diff));
+    }
+    if (!files.length){
+      const empty = document.createElement('div');
+      empty.className = 'cmd-line';
+      empty.textContent = 'Codex 报告了文件改动，但这次没有带上细节。';
+      d.appendChild(empty);
+    }
+    return d;
+  }
+
+  function addFileChange(item, replay){
+    const previous = item.id && commandCards.get(item.id);
+    const d = fileChangeBody(item);
+    // The group header counts cards by `dataset.exit`: '' = running, '0' = ok,
+    // anything else = failed. A file change has no exit code, but leaving the
+    // attribute unset made `undefined === ''` false and every file change was
+    // reported as a FAILED tool ("工具 5 条 · 1 条失败").
+    d.dataset.exit = item.status === 'completed' ? '0'
+      : item.status === 'in_progress' ? '' : '1';
+    if (previous && previous.isConnected){
+      previous.replaceWith(d);
+      if (previous.dataset.userOpened === '1') setUserOpened(d, true);
+    } else {
+      ensureToolGroup();
+      toolGroupBox.appendChild(d);
+      toolGroupCount++;
+      if (replay){
+        programmaticOpen(d, false);
+      } else {
+        if (toolGroup.dataset.userClosed !== '1') programmaticOpen(toolGroup, true);
+        // A live file change has no diff yet; keep it folded so it does not push
+        // the reply around, unless it is still in progress.
+        programmaticOpen(d, false);
+      }
+    }
+    if (item.id) commandCards.set(item.id, d);
+    d.addEventListener('toggle', () => {
+      if (consumeScripted(d)) return;
+      if (d.open) setUserOpened(d, true);
+      else setUserOpened(d, false);
+    });
+    refreshToolGroupHeader();
+    if (replay) programmaticOpen(toolGroup, false);
+  }
+
   function addCmd(item, replay){
     const previous = item.id && commandCards.get(item.id);
     const d = cmdBody(item);
@@ -1852,6 +2031,7 @@
         status('Codex 已开始…'); break;
       case 'item.started':
         if (ev.item?.type === 'command_execution') addCmd(ev.item);
+        if (ev.item?.type === 'file_change') addFileChange(ev.item);
         break;
       case 'item.completed': {
         const it = ev.item;
@@ -1860,6 +2040,9 @@
         else if (it.type === 'reasoning'){ showThinking(false); addReasoning(it); }
         else if (it.type === 'web_search'){ showThinking(false); addWebSearch(it); }
         else if (it.type === 'command_execution'){ addCmd(it); }
+        // Live events carry no diff (see addFileChange); the rollout does, and it
+        // is replayed on refresh.
+        else if (it.type === 'file_change'){ showThinking(false); addFileChange(it); }
         else addMeta('[' + it.type + ']');
         break;
       }
@@ -2084,6 +2267,7 @@
     for (const s of sessions){
       const el = document.createElement('div');
       el.className = 'sess' + (s.id === threadId ? ' active' : '');
+      el.dataset.id = s.id;             // so tooling/tests can find a session
       el.title = sessionLabel(s) + '\n' + s.id;
       const t = document.createElement('div');
       t.className = 'sess-title';
@@ -2223,6 +2407,7 @@
         // stream uses, so a refreshed session looks identical to what the user
         // just watched -- including the grouped, collapsed command card.
         if (m.kind === 'command' && m.item){ addCmd({ ...m.item, status: 'completed' }, true); continue; }
+        if (m.kind === 'file_change' && m.item){ addFileChange({ ...m.item, status: 'completed' }, true); continue; }
         if (m.kind === 'web_search' && m.item){ addWebSearch(m.item, true); continue; }
         if (m.kind === 'reasoning' && m.item){ addReasoning(m.item); continue; }
         if (m.role === 'user'){ addUser(m.text, m.attachments); previousRole = 'user'; }

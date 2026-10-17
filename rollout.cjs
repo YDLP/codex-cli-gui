@@ -165,6 +165,51 @@ function replayItem(it, maxChars) {
     if (text.length > maxChars) text = text.slice(0, maxChars) + '\n…（已截断）';
     return { role: 'assistant', kind: 'reasoning', item: { id: it.id, type: 'reasoning', text } };
   }
+  // File change. MEASURED shape in real rollouts:
+  //   { type:"FileChange", id, status, changes:{ <abs path>: { type, unified_diff, move_path } },
+  //     stdout, stderr }
+  // NOTE the rollout keys `changes` by path and includes the diff, while the LIVE
+  // `codex exec --json` event uses an array of { path, kind } with NO diff. The
+  // UI normalises both (normalizeFileChanges). Replay is the only place a diff is
+  // available at all.
+  if (it.type === 'FileChange') {
+    const changes = it.changes;
+    let files = [];
+    if (changes && typeof changes === 'object' && !Array.isArray(changes)) {
+      files = Object.entries(changes).map(([p, v]) => ({
+        path: p,
+        kind: String((v && v.type) || 'update'),
+        diff: String((v && v.unified_diff) || ''),
+        movePath: (v && v.move_path) || null,
+      }));
+    } else if (Array.isArray(changes)) {
+      files = changes.map((e) => ({
+        path: String((e && e.path) || ''),
+        kind: String((e && e.kind) || 'update'),
+        diff: '',
+        movePath: null,
+      }));
+    }
+    files = files.filter((f) => f.path);
+    if (!files.length) return null;
+    // Keep the transcript bounded: a huge patch must not bloat the history payload.
+    let used = 0;
+    for (const f of files) {
+      if (!f.diff) continue;
+      const room = Math.max(0, maxChars - used);
+      if (!room) { f.diff = '…（已截断）'; continue; }
+      used += f.diff.length;
+      if (f.diff.length > room) f.diff = f.diff.slice(0, room) + '\n…（已截断）';
+    }
+    return {
+      role: 'assistant', kind: 'file_change',
+      item: {
+        id: it.id, type: 'file_change',
+        status: it.status === 'completed' ? 'completed' : 'in_progress',
+        changes: files.map((f) => ({ path: f.path, type: f.kind, unified_diff: f.diff })),
+      },
+    };
+  }
   // Web search. MEASURED shape in real rollouts is an Extension, NOT WebSearchItem:
   //   { type:"Extension", kind:"web.search", id, query, action, results:[...] }
   // The app-server type name (`WebSearch`) is accepted too, for safety.

@@ -39,6 +39,12 @@ const read = (p) => new Promise((res, rej) => {
     ['uptime comes from the service start, not page load', /Date\.parse\(health\.startedAt/],
     ['uptime updates every second', /setInterval\(renderServerInfo, 1000\)/],
     ['a fresh restart is highlighted', /classList\.toggle\('fresh'/],
+    // File changes: rendered as tool activity, with the diff when replaying.
+    ['file changes render as a card', /function fileChangeBody/],
+    ['both live and rollout shapes are accepted', /function normalizeFileChanges/],
+    ['the diff is built from text nodes only', /function diffNode/],
+    ['diff lines are coloured by kind', /pre\.diff \.dl\.add/],
+    ['paths are shown relative to the working directory', /function shortPath/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

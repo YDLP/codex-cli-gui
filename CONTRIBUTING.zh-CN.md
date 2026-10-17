@@ -83,35 +83,51 @@ Windows PowerShell 5.1 和 `cmd.exe` 用系统 ANSI 代码页读取无 BOM 脚�
 `test/fixtures/fake-codex.cjs` 会发 `turn.completed`，**并且**写出一份带匹配
 `token_usage_record` 的 rollout。bridge 优先用 rollout 里的数字，两者不一致时测试就测错了东西。
 
-## 配方：渲染文件改动（当前最大的缺口）
+## 文件改动是怎么实现的（以及怎么扩展）
 
-Codex 已经在发数据了，只是没人渲染。真实会话里验证过的结构：
+Codex 发文件改动有**两种不同形状**，两种都会到达界面。这是全项目最容易被搞混的地方，所以写在这里。
 
-```json
+```jsonc
+// 实时：`codex exec --json`，item.type 是蛇形。没有 diff 内容。
+{"type":"item.completed","item":{
+  "id":"item_2","type":"file_change","status":"completed",
+  "changes":[{"path":"C:\\path\\to\\file.md","kind":"update"}]
+}}
+
+// rollout：~/.codex/sessions/**.jsonl，item.type 是大驼峰。有 diff。
 {"type":"event_msg","payload":{"type":"item_completed","item":{
   "type":"FileChange","id":"exec-...","status":"completed",
   "changes":{
-    "C:\\path\\to\\file.md":{"type":"update","unified_diff":"@@ -3,8 +3,7 @@\n ..."}
+    "C:\\path\\to\\file.md":{"type":"update","unified_diff":"@@ -3,8 +3,7 @@\n ...","move_path":null}
   },
-  "stdout":"Success. Updated the following files:\nM ...",
-  "stderr":""
+  "stdout":"Success. Updated the following files:\nM ...","stderr":""
 }}}
 ```
 
-`type` 是 `update`、`add` 或 `delete`。步骤：
+也就是说：**回合进行中只能显示「哪些文件变了」，diff 只存在于回合结束后的 rollout 里。**
+这是事件的固有性质，跑一次真实回合验证过，不是这里的偷懒。
 
-1. **`rollout.cjs`** —— 在 `replayItem()` 里按 `CommandExecution` 的方式处理
-   `FileChange`，返回 `{kind:'filechange', item}`。加一条夹具，并在
-   `check-rollout-replay.cjs` 里加断言。
-2. **`bridge.cjs`** —— 不用改，`item.completed` 已经原样转发。
-3. **`index.html`** —— 在 `addCmd()` 旁边写 `addFileChange(item)`。用
-   `insertBeforeAgentRow()` 插到**回复气泡之前**，并放进现有的 `.cmd-group`
-   （`ensureToolGroup()` / `setToolGroupLive()`）里，这样它和别的工具活动一起折叠。
-4. **diff 渲染** —— `unified_diff` 是纯文本。解析 `@@` 分块，用 `textContent`
-   输出带 `+`/`-`/` ` 前缀的 `<div class="dl">` 行。**不要用 `innerHTML`。**
-5. **测试** —— 夹具里加一个 `update`、一个 `add`、一个 `delete`；断言卡片数量、
-   文件名可见、`+` 行和 `-` 行都存在、以及含 `<script>` 的路径被当作文本渲染。
-6. **`check-ui.cjs` 和 `check-live.cjs`** 都要覆盖。
+流水线：
+
+| 环节 | 做什么 |
+|---|---|
+| `rollout.cjs` → `replayItem()` | 读大驼峰形状，把 `changes` 归一成 `{ path, type, unified_diff }` 数组，并按 `maxChars` 限制总 diff 长度。 |
+| `index.html` → `normalizeFileChanges()` | **两种形状都吃**：数组项里 `kind`/`type` 通用，`diff`/`unified_diff` 通用。 |
+| `index.html` → `fileChangeBody()` | 每个事件一个 `<details class="cmd filechg">`，每个路径一行，有 diff 就追加 diff 块。 |
+| `index.html` → `diffNode()` | 把 diff 拆成 `<div class="dl">` 行，用 `.add` / `.del` / `.hunk` / `.meta` 着色。**只用 `textContent`。** |
+| `index.html` → `addFileChange()` | 放进本轮的 `.cmd-group`、回复之上，折叠规则和命令一致。 |
+
+会咬人的地方：
+
+- **必须设置 `dataset.exit`。** 组头按它统计（`''` 执行中、`'0'` 成功、其它失败）。
+  不设会让每个文件改动都显示成**失败的工具**：`工具 5 条 · 1 条失败`。
+- **实时 item id 每轮重复**（`item_1`、`item_2`…），因为每轮是新进程。所以
+  `commandCards` 在每次新交换时清空（`clearTurnCards()`）；不清的话第二轮的
+  `item_1` 会**覆盖第一轮的卡片**。
+- **路径必须当文本渲染。** 夹具里特意放了一个含 `<script>alert(1)</script>` 的路径，
+  测试断言注入元素为 0。
+
+扩展方向：并排 diff 视图只需替换 `diffNode()` —— 归一化和卡片已经把数据都带上了。
 
 ## 工作流
 

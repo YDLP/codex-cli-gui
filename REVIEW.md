@@ -220,6 +220,48 @@ exec ... resume <id> --json --skip-git-repo-check -m gpt-6.1-sol -c model_reason
 
 **不确定时不要问模型**——看这个提示，或看 bridge 的 `meta.args`。
 
+### ✅ 文件改动现在会显示 diff 了
+
+用户最初把它列为「最大的洞」：Codex 改了文件，界面什么都不显示。实现时才发现真正麻烦的地方。
+
+#### 事件有两种形状，而且只有一种带 diff
+
+```jsonc
+// 实时（codex exec --json）：数组，蛇形，**没有 diff**
+"changes":[{"path":"...","kind":"update"}]
+
+// rollout（~/.codex/sessions）：对象，按路径键，**有 diff**
+"changes":{"...":{"type":"update","unified_diff":"@@ -1,3 +1,3 @@..."}}
+```
+
+**实测确认**：跑一个真实回合强制用 `apply_patch` 改文件，实时流里只有路径和
+`kind`，`unified_diff` 只写在 rollout 里。
+
+所以行为是：**回合进行中看到「改了哪些文件」，刷新/重开会话才看到 diff。**
+
+#### 另一个实测发现：Windows 上多数改动根本不发 FileChange
+
+第一次探测时我让它「用 shell 命令改 note.txt」—— 文件确实改了，但事件里**只有一条
+`command_execution`**，没有 `file_change`。只有走 `apply_patch` 才会有。
+这解释了真实会话里 `FileChange` 只占 4 条、而命令有 96 条。
+
+#### 修掉两个连带 bug
+
+| 问题 | 原因 | 修法 |
+|---|---|---|
+| 组头显示「工具 5 条 · **1 条失败**」 | 组头按 `dataset.exit` 统计；文件改动没设这个属性，`undefined === ''` 为假 → 算失败 | `addFileChange` 里按状态设 `'0'` / `''` / `'1'` |
+| **第二轮的命令覆盖第一轮卡片** | 实时 item id 是每进程计数器（`item_1`…），每轮重置；`commandCards` 只在线程切换时清空 | 每次新交换清空（`clearTurnCards()`） |
+
+第二个是**先前就存在的**，只是这次加文件改动时才注意到。
+
+#### 渲染
+
+`diffNode()` 把 `unified_diff` 拆成 `<div class="dl">` 行，`+`/`-`/`@@`/元信息各自着色，
+**全部 `textContent`**。夹具里放了一个路径含 `<script>alert(1)</script>`，
+断言注入元素为 0、`window.__xss` 未设置。
+
+路径按工作目录相对化显示（`note.txt` 而不是完整绝对路径），`title` 里保留全路径。
+
 ### ⛔ 「显示推理摘要」永远是空的 —— 已移除该开关
 
 用户判断：「没有流式输出的话推理显示没有意义」。**这个判断是对的**，而且有个更根本的原因。

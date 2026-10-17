@@ -61,6 +61,20 @@ if (args[0] === 'app-server') {
     emit({ type:'item.completed', item:{ id:'ws-1', type:'web_search',
       query:'codex cli 0.162.1 release notes',
       action:{ type:'search', query:'codex cli 0.162.1 release notes', queries:null } } });
+
+    // A file change. MEASURED live shape: `changes` is an ARRAY of { path, kind }
+    // and carries NO diff. One of the paths contains a script tag on purpose: the
+    // renderer must show it as text.
+    const changedFiles = [
+      { path: path.join(process.cwd(), 'note.txt'), kind: 'update' },
+      { path: path.join(process.cwd(), 'added.md'), kind: 'add' },
+      { path: path.join(process.cwd(), '<script>alert(1)</script>.txt'), kind: 'delete' },
+    ];
+    emit({ type:'item.started', item:{ id:'fc-1', type:'file_change',
+      changes: changedFiles, status:'in_progress' } });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    emit({ type:'item.completed', item:{ id:'fc-1', type:'file_change',
+      changes: changedFiles, status:'completed' } });
     // Deliberately split a UTF-8 code point across OS pipe chunks.
     // The reply carries Markdown AND an HTML injection attempt: the UI must
     // render the Markdown without ever letting model output create markup.
@@ -113,6 +127,14 @@ if (args[0] === 'app-server') {
         turn_id:'fixture-turn',item:{type:'CommandExecution',id:'exec-fixture-'+i,
           command:[cmd],status:'completed',exit_code:0,
           aggregated_output:i===2?'CMD output test: OK':'ok'}}})),
+      // The rollout's FileChange shape DIFFERS from the live one: `changes` is an
+      // OBJECT keyed by path and it DOES carry a unified diff. Both must render.
+      {type:'event_msg',payload:{type:'item_completed',turn_id:'fixture-turn',
+        item:{type:'FileChange',id:'exec-fixture-file',status:'completed',changes:{
+          [changedFiles[0].path]:{type:'update',unified_diff:'@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n',move_path:null},
+          [changedFiles[1].path]:{type:'add',unified_diff:'@@ -0,0 +1,2 @@\n+first line\n+second line\n',move_path:null},
+          [changedFiles[2].path]:{type:'delete',unified_diff:'@@ -1,1 +0,0 @@\n-gone\n',move_path:null},
+        },stdout:'Success. Updated the following files:',stderr:''}}},
       {type:'response_item',payload:{type:'message',role:'assistant',
         content:[{type:'output_text',text:replyText}]}},
     ].map(row=>JSON.stringify(row)).join('\n'));

@@ -27,7 +27,7 @@ better. This exists for the machines that fall through the cracks.
 - **Model + reasoning-effort pickers** — read from the CLI's own catalog
 - **Permission modes** — read-only / workspace-write / full-access, switchable per session
 - **Attachments** — images go in as images, everything else is handed over by path
-- **Tool activity as collapsible cards** — commands, exit codes and web searches grouped per turn
+- **Tool activity as collapsible cards** — commands, exit codes, web searches and **file changes with diffs**, grouped per turn
 - **Context meter** — how full the window is, plus an inferred "possible compaction" marker
 - **Native folder picker**, three themes, windowless detached launcher
 - **Zero runtime dependencies** — Node built-ins only; no `npm install` needed
@@ -143,6 +143,11 @@ not exist:
   used.
 - **Compaction is inferred, not reported.** `codex exec --json` has no compaction
   event, so the GUI flags a large drop in context usage as "possibly compacted".
+- **A live file change carries no diff.** The live event gives only
+  `changes: [{ path, kind }]`; the `unified_diff` is written to the rollout file
+  separately. So during a turn you see *which* files changed, and the diff itself
+  appears when the session is replayed (a page refresh, or reopening it). Verified
+  against a real turn — this is a property of the event, not a shortcut here.
 
 ## Known gaps — good first contributions
 
@@ -151,10 +156,9 @@ want to use this as a baseline, these are honest starting points, roughly by val
 
 | Gap | Where | Why it matters |
 |---|---|---|
-| **File changes are not rendered** | `index.html` (`addCmd` is the pattern to copy) | Codex emits `FileChange` items with `changes[path].unified_diff` and they are **currently invisible**. In workspace-write mode you cannot see what it edited. This is the biggest hole. |
 | **No session search or filter** | `index.html` session list | Once you have 50 sessions you scroll. |
 | **No export** | — | Copying a whole conversation out as Markdown is not possible. |
-| **No diff view for command output** | `index.html` tool cards | Long outputs are plain text. |
+| **No side-by-side diff view** | `index.html` (`diffNode`) | Diffs render as unified text; there is no split view or syntax highlighting. |
 | **Multi-tab coordination** | `bridge.cjs` | Two tabs on the same session race; there is a 409 guard but no shared state. |
 | **Few keyboard shortcuts** | `index.html` | Enter / Shift+Enter / Escape only. |
 | **Model catalog is static** | `models.json`, `extract-models.cjs` | Needs `node extract-models.cjs` when the CLI ships new models. |

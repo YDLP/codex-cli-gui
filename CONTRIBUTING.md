@@ -104,39 +104,55 @@ so you can tell which code you are looking at.
 matching `token_usage_record`. The bridge prefers rollout numbers, so if the two
 disagree the test measures the wrong thing.
 
-## Recipe: render file changes (the top gap)
+## How file changes are implemented (and how to extend it)
 
-Codex already emits the data; nothing renders it. Verified payload shape from a real
-rollout:
+Codex emits file changes in **two different shapes**, and both reach the UI. This is
+the single most confusing part of the codebase, so it is written down here.
 
-```json
+```jsonc
+// LIVE: `codex exec --json`, item.type is snake_case. NO diff content.
+{"type":"item.completed","item":{
+  "id":"item_2","type":"file_change","status":"completed",
+  "changes":[{"path":"C:\\path\\to\\file.md","kind":"update"}]
+}}
+
+// ROLLOUT: ~/.codex/sessions/**.jsonl, item.type is CamelCase. HAS the diff.
 {"type":"event_msg","payload":{"type":"item_completed","item":{
   "type":"FileChange","id":"exec-...","status":"completed",
   "changes":{
-    "C:\\path\\to\\file.md":{"type":"update","unified_diff":"@@ -3,8 +3,7 @@\n ..."}
+    "C:\\path\\to\\file.md":{"type":"update","unified_diff":"@@ -3,8 +3,7 @@\n ...","move_path":null}
   },
-  "stdout":"Success. Updated the following files:\nM ...",
-  "stderr":""
+  "stdout":"Success. Updated the following files:\nM ...","stderr":""
 }}}
 ```
 
-`type` is `update`, `add` or `delete`. Steps:
+So: **during a turn you can only show *which* files changed. The diff exists only
+after the turn, in the rollout.** That is a property of the event, verified by
+running a real turn — not a shortcut.
 
-1. **`rollout.cjs`** — in `replayItem()`, handle `FileChange` the way `CommandExecution`
-   is handled, returning `{kind:'filechange', item}`. Add a fixture line and a
-   `check-rollout-replay.cjs` assertion.
-2. **`bridge.cjs`** — nothing to do; `item.completed` is already forwarded verbatim.
-3. **`index.html`** — write `addFileChange(item)` next to `addCmd()`. Insert it with
-   `insertBeforeAgentRow()` so it lands **above** the reply bubble, and give it
-   `details`/`summary` inside the existing `.cmd-group` so it folds with the other
-   tool activity (`ensureToolGroup()` / `setToolGroupLive()`).
-4. **Diff rendering** — `unified_diff` is plain text. Parse `@@` hunks and emit
-   `<div class="dl">` lines with `+`/`-`/` ` prefixes via `textContent`. **Do not use
-   `innerHTML`.**
-5. **Tests** — extend the fixture with one `update`, one `add`, one `delete`; assert the
-   card count, that the file name is shown, that a `+` line and a `-` line both exist,
-   and that a path containing `<script>` renders as text.
-6. **Both `check-ui.cjs` and `check-live.cjs`** should learn about it.
+The pipeline:
+
+| Stage | What it does |
+|---|---|
+| `rollout.cjs` → `replayItem()` | Reads the CamelCase shape, normalises `changes` into an array of `{ path, type, unified_diff }`, caps the total diff length with `maxChars`. |
+| `index.html` → `normalizeFileChanges()` | Accepts **both** shapes: array entries use `kind`/`type` interchangeably, and `diff`/`unified_diff`. |
+| `index.html` → `fileChangeBody()` | One `<details class="cmd filechg">` per event, one row per path, plus a diff block when there is one. |
+| `index.html` → `diffNode()` | Splits the diff into `<div class="dl">` rows, coloured via `.add` / `.del` / `.hunk` / `.meta`. **`textContent` only.** |
+| `index.html` → `addFileChange()` | Drops it into the turn's `.cmd-group`, above the reply, same folding rules as commands. |
+
+Gotchas that will bite you:
+
+- **`dataset.exit` must be set.** The group header counts cards by it (`''` running,
+  `'0'` ok, anything else failed). Leaving it unset made every file change show up as
+  a *failed* tool: `工具 5 条 · 1 条失败`.
+- **Live item ids repeat every turn** (`item_1`, `item_2`, ...) because each turn is a
+  new process. `commandCards` is therefore cleared per exchange in `addTurnDivider`'s
+  path (`clearTurnCards()`); without that, turn 2 replaced turn 1's card.
+- **Paths must be rendered as text.** The fixture includes a path containing
+  `<script>alert(1)</script>` and the test asserts zero injected elements.
+
+Extending it: a side-by-side view would replace `diffNode()` only — the normaliser and
+the card already carry everything needed.
 
 ## Workflow
 

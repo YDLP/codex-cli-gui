@@ -27,6 +27,15 @@ fs.writeFileSync(path.join(dir, `rollout-${id}.jsonl`), [
   // Older/normalized spelling, which must also be accepted.
   { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'WebSearch', id: 'ws-2',
     query: 'second query', action: { type: 'openPage', url: 'https://example.com/y' }, results: null } } },
+  // File change. MEASURED rollout shape: `changes` keyed by path, WITH the diff.
+  // The live `codex exec --json` event has an array and no diff, so both shapes
+  // have to reach the UI (see normalizeFileChanges in index.html).
+  { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'FileChange', id: 'exec-fc-1', status: 'completed',
+    changes: {
+      'E:\\proj\\note.txt': { type: 'update', unified_diff: '@@ -1,2 +1,2 @@\n alpha\n-beta\n+BETA\n', move_path: null },
+      'E:\\proj\\new.md': { type: 'add', unified_diff: '@@ -0,0 +1 @@\n+hello\n', move_path: null },
+    },
+    stdout: 'Success. Updated the following files:', stderr: '' } } },
   { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '读到了' }] } },
 ].map((r) => JSON.stringify(r)).join('\n'));
 
@@ -40,8 +49,21 @@ for (const m of r.messages) {
 }
 
 const kinds = r.messages.map((m) => m.kind || 'message');
-assert.deepEqual(kinds, ['message', 'command', 'command', 'reasoning', 'web_search', 'web_search', 'message'],
-  'commands, reasoning and web searches must be replayed in order');
+assert.deepEqual(kinds, ['message', 'command', 'command', 'reasoning', 'web_search', 'web_search', 'file_change', 'message'],
+  'commands, reasoning, web searches and file changes must be replayed in order');
+
+// File changes: the rollout keys `changes` by path and DOES include the diff, so
+// replay must carry it through -- that is the only place a diff exists at all.
+const fc = r.messages.find((m) => m.kind === 'file_change');
+assert.ok(fc, 'a FileChange item must replay');
+assert.equal(fc.item.type, 'file_change', 'the replayed item uses the live event name');
+assert.equal(fc.item.status, 'completed');
+assert.equal(fc.item.changes.length, 2, 'both changed paths must survive');
+const byPath = Object.fromEntries(fc.item.changes.map((c) => [c.path, c]));
+assert.equal(byPath['E:\\proj\\note.txt'].type, 'update');
+assert.equal(byPath['E:\\proj\\note.txt'].unified_diff.includes('+BETA'), true,
+  'the unified diff must be replayed: ' + JSON.stringify(byPath['E:\\proj\\note.txt']));
+assert.equal(byPath['E:\\proj\\new.md'].type, 'add');
 
 const searches = r.messages.filter((m) => m.kind === 'web_search');
 assert.equal(searches.length, 2, 'both spellings must be recognised');

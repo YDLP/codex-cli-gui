@@ -92,6 +92,13 @@ async function main(){
       command:[cmdText],status:'completed',exit_code:0,aggregated_output:'OUT-A'}}},
     {type:'event_msg',payload:{type:'item_completed',item:{type:'CommandExecution',id:'exec-b',
       command:['cmd.exe /d /c echo CMD output test: OK'],status:'completed',exit_code:0,aggregated_output:'CMD output test: OK'}}},
+    // A file change WITH a diff. Only the rollout carries diffs, so replay is the
+    // one place the UI can show HOW a file changed.
+    {type:'event_msg',payload:{type:'item_completed',item:{type:'FileChange',id:'exec-fc',
+      status:'completed',changes:{
+        [path.join(temp,'note.txt')]:{type:'update',
+          unified_diff:'@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n',move_path:null},
+      },stdout:'Success.',stderr:''}}},
     {type:'response_item',payload:{type:'message',role:'assistant',content:[{type:'output_text',text:'都跑完了'}]}},
   ].map((r)=>JSON.stringify(r)).join('\n'));
   const a='00000000-0000-0000-0000-000000000001',b='00000000-0000-0000-0000-000000000002';
@@ -262,12 +269,33 @@ async function main(){
     assert.equal(await evaluate("$test('btnNew').disabled"),true);
     await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled");
     assert.equal(await evaluate('__test.runCalls'),1);
-    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd').length"),4,
-      'three commands plus one web search');
+    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd').length"),5,
+      'three commands, one web search and one file change');
     assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group').length"),1);
-    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group .grp-body details.cmd').length"),4,
-      'the web search must fold into the same group as the commands');
+    assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group .grp-body details.cmd').length"),5,
+      'the web search and the file change must fold into the same group as the commands');
     assert.equal(await evaluate("document.querySelectorAll('#log details.cmd-group .grp-body details.cmd.web').length"),1);
+    // File changes: rendered as tool activity, above the reply, inside the group.
+    const fch=JSON.parse(await evaluate(`JSON.stringify({
+      cards:document.querySelectorAll('#log details.cmd-group .grp-body details.filechg').length,
+      rows:document.querySelectorAll('#log details.filechg .fch-head').length,
+      kinds:[...document.querySelectorAll('#log details.filechg .fch-head .pill')].map(function(x){return x.textContent;}),
+      paths:[...document.querySelectorAll('#log details.filechg .fch-head code')].map(function(x){return x.textContent;}),
+      diffLines:document.querySelectorAll('#log details.filechg pre.diff .dl').length,
+      injected:document.querySelectorAll('#log details.filechg script').length,
+      xss:!!window.__xss})`));
+    console.log('       file change (live):', JSON.stringify(fch));
+    assert.equal(fch.cards,1,'a file change must render one card: '+JSON.stringify(fch));
+    assert.equal(fch.rows,3,'one row per changed path: '+JSON.stringify(fch));
+    assert.deepEqual(fch.kinds,['修改','新增','删除'],'kind labels: '+JSON.stringify(fch));
+    // A path containing a script tag must be TEXT, never markup.
+    assert.equal(fch.paths.some((p) => p.includes('<script>alert(1)</script>')),true,
+      'the hostile path must be shown as text: '+JSON.stringify(fch));
+    assert.equal(fch.injected,0,'no script element may be created from a path');
+    assert.equal(fch.xss,false,'nothing may execute');
+    // MEASURED: the live `codex exec --json` event has no diff content at all, so
+    // the live card legitimately shows none. Diffs appear on replay (next check).
+    assert.equal(fch.diffLines,0,'live file_change events carry no diff: '+JSON.stringify(fch));
     // And nothing may be left outside the group as a loose tool line.
     assert.equal(await evaluate("document.querySelectorAll('#log .tool-line').length"),0,
       'no tool activity may render outside the group');
@@ -491,9 +519,12 @@ async function main(){
     const G=JSON.parse(grp);
     console.log('       command group:', grp);
     assert.equal(G.groups,1,'all of a turn\'s tool activity must share one group: '+grp);
-    assert.equal(G.rows,4,'every tool row must still be listed inside it: '+grp);
+    assert.equal(G.rows,5,'every tool row must still be listed inside it: '+grp);
     assert.equal(G.open,false,'the group must fold when the turn ends: '+grp);
-    assert.match(G.header,/4 条/,'the header must state how many tools ran: '+grp);
+    assert.match(G.header,/5 条/,'the header must state how many tools ran: '+grp);
+    // A file change has no exit code; it must still count as a success, not a
+    // failure ("工具 5 条 · 1 条失败" was the bug when dataset.exit was unset).
+    assert.doesNotMatch(G.header,/失败/,'a completed file change is not a failure: '+grp);
     // A card the user opens by hand opts out of the automatic collapse: simulate
     // the manual open and confirm the guard is recorded (that flag is what
     // collapseToolCards() skips on a later turn).
@@ -588,9 +619,28 @@ async function main(){
     })()`));
     console.log('       replayed group:', JSON.stringify(got));
     assert.equal(got.groups,1,'the reloaded session must show a command group: '+JSON.stringify(got));
-    assert.equal(got.rows,2,'every command must be replayed: '+JSON.stringify(got));
+    assert.equal(got.rows,3,'two commands and one file change must be replayed: '+JSON.stringify(got));
     assert.equal(got.open,false,'a reloaded group must start folded, like a finished turn: '+JSON.stringify(got));
     assert.ok(got.full>60,'the full command text must be replayed, not just the peek: '+JSON.stringify(got));
+
+    // The replayed file change carries the diff -- this is the payoff of the whole
+    // feature: during a turn you see WHAT changed, after it you also see HOW.
+    const replayed=JSON.parse(await evaluate(`JSON.stringify({
+      cards:document.querySelectorAll('#log details.filechg').length,
+      rows:document.querySelectorAll('#log details.filechg .fch-head').length,
+      paths:[...document.querySelectorAll('#log details.filechg .fch-head code')].map(function(x){return x.textContent;}),
+      added:[...document.querySelectorAll('#log details.filechg pre.diff .dl.add')].map(function(x){return x.textContent;}),
+      removed:[...document.querySelectorAll('#log details.filechg pre.diff .dl.del')].map(function(x){return x.textContent;}),
+      hunks:document.querySelectorAll('#log details.filechg pre.diff .dl.hunk').length,
+      folded:document.querySelector('#log details.filechg').open})`));
+    console.log('       replayed file change:', JSON.stringify(replayed));
+    assert.equal(replayed.cards,1,'the replayed file change must render: '+JSON.stringify(replayed));
+    assert.equal(replayed.rows,1,'one row: '+JSON.stringify(replayed));
+    assert.equal(replayed.paths[0],'note.txt','the path is shown relative to the cwd: '+JSON.stringify(replayed));
+    assert.deepEqual(replayed.added,['+BETA'],'added lines: '+JSON.stringify(replayed));
+    assert.deepEqual(replayed.removed,['-beta'],'removed lines: '+JSON.stringify(replayed));
+    assert.equal(replayed.hunks,1,'the @@ hunk header must render: '+JSON.stringify(replayed));
+    assert.equal(replayed.folded,false,'a replayed card starts folded: '+JSON.stringify(replayed));
     // Restore the sidebar fixture for the checks that follow.
     await evaluate("__test.realHistory=false");
     await evaluate(`__test.sessions=${JSON.stringify([
@@ -883,17 +933,28 @@ async function main(){
     await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",9000);
     assert.equal(await evaluate("document.querySelector('#log details.cmd-group').open"),false,
       'later commands must NOT re-open a group the user closed');
-    assert.equal(await evaluate("document.querySelectorAll('#log .grp-body details.cmd').length"),4,
-      'every command must still be recorded inside the closed group');
+    assert.equal(await evaluate("document.querySelectorAll('#log .grp-body details.cmd').length"),5,
+      'every tool must still be recorded inside the closed group (3 commands, 1 search, 1 file change)');
   });
   await check('the meter says so while a turn is running',async()=>{
     // `codex exec --json` reports usage only at turn.completed, so during a turn
     // the figure on screen is the previous turn's. Unlabelled, that reads as a
     // broken meter -- which is exactly how it was reported.
-    await evaluate("$test('prompt').value='WAIT browser';$test('btnSend').click()");
+    await evaluate("$test('prompt').value='WAIT browser'");
+    // Make sure the composer is actually ready before clicking: clicking a
+    // disabled button silently does nothing, and the wait below then times out
+    // with no clue why. This test used to flake exactly that way.
+    await waitUI("!$test('btnSend').disabled", 8000);
+    await evaluate("$test('btnSend').click()");
     // markCtxStale(true) fires when the run is ACCEPTED (the `meta` frame), which
     // is after the directory check -- so wait for the running status itself.
-    await waitUI("$test('status').textContent.startsWith('运行中')",9000);
+    try {
+      await waitUI("$test('status').textContent.startsWith('运行中') || /失败|错误/.test($test('status').textContent)", 15000);
+    } catch (e) {
+      throw new Error('the turn never started; status was: ' + await evaluate("$test('status').textContent"));
+    }
+    assert.doesNotMatch(await evaluate("$test('status').textContent"), /失败|错误/,
+      'the run must not fail before this check: ' + await evaluate("$test('status').textContent"));
     const during=JSON.parse(await evaluate(`JSON.stringify({
       tagHidden:document.getElementById('ctxStaleTag').hidden,
       stale:document.getElementById('ctxText').classList.contains('stale'),
