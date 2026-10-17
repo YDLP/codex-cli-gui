@@ -1,0 +1,12 @@
+@echo off
+setlocal
+title Codex GUI
+cd /d "%~dp0"
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Node.js 22 or later is required.
+  pause
+  exit /b 1
+)
+node "%~dp0launch.cjs"
+if errorlevel 1 pause

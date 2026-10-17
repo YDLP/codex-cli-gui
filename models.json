@@ -1,0 +1,243 @@
+{
+  "generatedAt": "2026-10-15T06:50:52.469Z",
+  "source": "Codex model catalog (not an entitlement check)",
+  "models": [
+    {
+      "slug": "gpt-6.1-sol",
+      "name": "GPT-6.1-Sol",
+      "description": "Latest workhorse model for coding and everyday work.",
+      "defaultEffort": "low",
+      "contextWindow": 500000,
+      "maxContextWindow": 872000,
+      "usableContextWindow": 475000,
+      "efforts": [
+        {
+          "value": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "value": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "value": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "value": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "value": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
+        {
+          "value": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ]
+    },
+    {
+      "slug": "gpt-6-astra",
+      "name": "GPT-6-Astra",
+      "description": "Frontier intelligence for the most demanding work.",
+      "defaultEffort": "low",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "usableContextWindow": 258400,
+      "efforts": [
+        {
+          "value": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "value": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "value": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "value": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "value": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
+        {
+          "value": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ]
+    },
+    {
+      "slug": "gpt-6-sol",
+      "name": "GPT-6-Sol",
+      "description": "Previous generation workhorse model.",
+      "defaultEffort": "medium",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "usableContextWindow": 258400,
+      "efforts": [
+        {
+          "value": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "value": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "value": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "value": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "value": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
+        {
+          "value": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ]
+    },
+    {
+      "slug": "gpt-6-luna",
+      "name": "GPT-6-Luna",
+      "description": "Fast and affordable model for easier tasks.",
+      "defaultEffort": "medium",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "usableContextWindow": 258400,
+      "efforts": [
+        {
+          "value": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "value": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "value": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "value": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "value": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        }
+      ]
+    },
+    {
+      "slug": "gpt-5.6-sol",
+      "name": "GPT-5.6-Sol",
+      "description": "Older generation workhorse model.",
+      "defaultEffort": "low",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "usableContextWindow": 258400,
+      "efforts": [
+        {
+          "value": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "value": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "value": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "value": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "value": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
+        {
+          "value": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ]
+    },
+    {
+      "slug": "gpt-5.6-terra",
+      "name": "GPT-5.6-Terra",
+      "description": "Older balanced model for straightforward work.",
+      "defaultEffort": "medium",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "usableContextWindow": 258400,
+      "efforts": [
+        {
+          "value": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "value": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "value": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "value": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "value": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
+        {
+          "value": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ]
+    },
+    {
+      "slug": "gpt-5.6-luna",
+      "name": "GPT-5.6-Luna",
+      "description": "Older fast and efficient model.",
+      "defaultEffort": "medium",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "usableContextWindow": 258400,
+      "efforts": [
+        {
+          "value": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "value": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "value": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "value": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "value": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        }
+      ]
+    }
+  ]
+}

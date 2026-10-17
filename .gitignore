@@ -1,0 +1,24 @@
+# --- Personal configuration (never commit) ---------------------------------
+# Contains your working directory, proxy and UI preferences. Copy
+# settings.example.json to settings.json, or just let the app create it.
+settings.json
+
+# --- Runtime state ---------------------------------------------------------
+.codex-gui/
+*.log
+
+# --- Local notes / scratch -------------------------------------------------
+NEXT.md
+deleted-sessions-backup.json
+
+# --- Node ------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# --- Editors / OS ----------------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+*.swp

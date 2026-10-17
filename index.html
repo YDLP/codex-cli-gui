@@ -1,0 +1,2734 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex GUI</title>
+<style>
+  /* ---- themes ------------------------------------------------------- */
+  :root, [data-theme="dark"]{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --line:#2a3240;
+    --fg:#e6edf3; --dim:#8b949e; --accent:#4493f8; --accent2:#2f81f7;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --code:#0b0f16;
+    --userbg:#152238; --userbd:#22406b;
+    --thinkbg:#161d2b; --thinkbd:#2b3a52; --thinkfg:#9fb0c9;
+    --shadow:0 8px 28px rgba(0,0,0,.45);
+  }
+  [data-theme="light"]{
+    --bg:#f6f8fa; --panel:#ffffff; --panel2:#f0f3f6; --line:#d8dee4;
+    --fg:#1f2328; --dim:#656d76; --accent:#0969da; --accent2:#0969da;
+    --ok:#1a7f37; --warn:#9a6700; --err:#cf222e; --code:#f6f8fa;
+    --userbg:#ddf4ff; --userbd:#b6e3ff;
+    --thinkbg:#f3f0ff; --thinkbd:#ddd6fe; --thinkfg:#5b5678;
+    --shadow:0 8px 28px rgba(31,35,40,.16);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg); color:var(--fg);
+    font:14px/1.6 "Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;
+    display:flex; flex-direction:column; height:100dvh; overflow:hidden;
+    transition:background .15s, color .15s;
+  }
+  header{
+    display:flex; align-items:center; gap:12px; padding:10px 16px;
+    background:var(--panel); border-bottom:1px solid var(--line); flex:0 0 auto;
+  }
+  header h1{font-size:15px; margin:0; font-weight:600; letter-spacing:.3px}
+  .badge{
+    font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line);
+    color:var(--dim); background:var(--panel2); white-space:nowrap;
+  }
+  .badge.on{color:var(--ok); border-color:var(--ok)}
+  .spacer{flex:1}
+  button{
+    font:inherit; color:var(--fg); background:var(--panel2); border:1px solid var(--line);
+    border-radius:6px; padding:5px 12px; cursor:pointer; transition:.12s;
+  }
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button:disabled{opacity:.45; cursor:not-allowed}
+  button.primary{background:var(--accent2); border-color:var(--accent2); color:#fff; font-weight:600}
+  button.danger{border-color:var(--err); color:var(--err)}
+  button.icon{padding:5px 9px}
+  main{flex:1; display:flex; min-height:0}
+
+  /* ---- settings drawer ---------------------------------------------- */
+  aside{
+    width:340px; flex:0 0 auto; background:var(--panel); border-right:1px solid var(--line);
+    padding:14px 16px; overflow-y:auto;
+  }
+  aside.hidden{display:none}
+  .field{margin-bottom:14px}
+  .field label{display:block; font-size:12px; color:var(--dim); margin-bottom:5px; font-weight:600}
+  .field input[type=text], .field select{
+    width:100%; padding:7px 9px; background:var(--code); color:var(--fg);
+    border:1px solid var(--line); border-radius:6px; font:inherit;
+  }
+  .field select{cursor:pointer}
+  .field input:focus, .field select:focus{outline:none; border-color:var(--accent)}
+  .hint{font-size:11px; color:var(--dim); margin-top:5px; line-height:1.5}
+  .row-inline{display:flex; gap:8px}
+  .row-inline input{flex:1; min-width:0}
+  .row-inline button{flex:0 0 auto; white-space:nowrap}
+  .check{display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:13px; cursor:pointer}
+  .check input{width:15px; height:15px; accent-color:var(--accent2); cursor:pointer}
+  .recent{display:flex; flex-wrap:wrap; gap:6px; margin-top:7px}
+  .recent button{font-size:11px; padding:3px 8px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .sect{border-top:1px solid var(--line); margin-top:16px; padding-top:14px}
+  .sect:first-of-type{border-top:0; margin-top:0; padding-top:0}
+  .sect h2{font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); margin:0 0 10px}
+
+  /* ---- transcript --------------------------------------------------- */
+  section.chat{flex:1; display:flex; flex-direction:column; min-width:0; min-height:0}
+  #log{flex:1; min-height:0; overflow-y:auto; padding:18px 22px}
+
+  /* ---- prompt jump rail ---- */
+  .chat{position:relative}
+  .jump-rail{
+    position:absolute; top:12px; right:4px; width:26px;
+    /* At most JUMP_VISIBLE_DOTS dots are shown; the rest scroll under the wheel.
+       Letting the rail stretch to the full panel height made it hold every dot,
+       which is both unreadable and hard to aim at. */
+    max-height:calc(var(--jump-dots) * 26px + 10px);
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    overflow-y:auto; overflow-x:hidden; padding:5px 0; z-index:3;
+    /* No scrollbar AT ALL: the rail is scrolled with the wheel while hovering,
+       and the fades below show that more exists. */
+    scrollbar-width:none; -ms-overflow-style:none;
+    overscroll-behavior:contain;
+  }
+  .jump-rail::-webkit-scrollbar{width:0; height:0; display:none}
+  .jump-rail:empty{display:none}
+  /* Hint that the rail continues beyond what is visible. */
+  .jump-rail.more-above{ -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 16px);
+                         mask-image:linear-gradient(180deg,transparent 0,#000 16px); }
+  .jump-rail.more-below{ -webkit-mask-image:linear-gradient(0deg,transparent 0,#000 16px);
+                         mask-image:linear-gradient(0deg,transparent 0,#000 16px); }
+  .jump-rail.more-above.more-below{
+    -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%);
+    mask-image:linear-gradient(180deg,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%);
+  }
+  /* A pill rather than a dot: a much larger hit target, easier to aim at. */
+  .jump-dot{
+    flex:0 0 auto; width:16px; height:22px; padding:0; border-radius:5px;
+    border:1px solid var(--line); background:var(--panel2); cursor:pointer;
+    transition:width .12s ease, background .12s ease, border-color .12s ease;
+  }
+  .jump-dot:hover{width:24px; background:var(--accent); border-color:var(--accent)}
+  .jump-dot.active{background:var(--accent); border-color:var(--accent); width:22px}
+  .jump-tip{
+    position:absolute; right:36px; z-index:4; max-width:330px;
+    padding:7px 10px; border-radius:7px; border:1px solid var(--line);
+    background:var(--panel); color:var(--fg); font-size:12px; line-height:1.5;
+    box-shadow:0 6px 20px rgba(0,0,0,.28); pointer-events:none;
+    white-space:pre-wrap; word-break:break-word;
+  }
+  .jump-tip b{color:var(--accent)}
+  @media (max-width:820px){ .jump-rail{display:none} }
+  .row{margin-bottom:16px; display:flex; flex-direction:column; gap:6px}
+  .who{font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--dim)}
+  .row.user .who{color:var(--accent)}
+  .row.agent .who{color:var(--ok)}
+  .bubble{
+    padding:10px 13px; border-radius:8px; border:1px solid var(--line);
+    background:var(--panel); white-space:pre-wrap; word-break:break-word;
+  }
+  .row.user .bubble{background:var(--userbg); border-color:var(--userbd)}
+
+  /* ---- attachments inside a replayed message ---- */
+  .att-row{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px}
+  .att{
+    border:1px solid var(--line); border-radius:6px; overflow:hidden;
+    background:var(--code); max-width:220px; font-size:11.5px; color:var(--dim);
+    padding:4px 8px;
+  }
+  .att img{
+    display:block; max-width:200px; max-height:140px; border-radius:4px;
+    cursor:zoom-in; object-fit:contain;
+  }
+  .att-missing{color:var(--warn); border-style:dashed}
+  .img-back{
+    position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.72);
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .img-box{
+    display:flex; flex-direction:column; gap:8px; align-items:center;
+    max-width:100%; max-height:100%;
+  }
+  .img-box img{
+    max-width:100%; max-height:calc(100vh - 140px); object-fit:contain;
+    border-radius:8px; background:var(--panel);
+  }
+  .img-cap{color:#fff; font-size:12px; opacity:.85; word-break:break-all; text-align:center}
+  .img-close{
+    padding:6px 16px; border-radius:6px; cursor:pointer;
+    border:1px solid rgba(255,255,255,.35); background:transparent; color:#fff;
+  }
+  .img-close:hover{background:rgba(255,255,255,.14)}
+
+  /* ---- one card per Codex turn ---- */
+  .row.turn{
+    border:1px solid var(--line); border-radius:10px;
+    background:var(--panel2); padding:10px 12px; gap:8px;
+  }
+  .turn-head{
+    font-size:11px; font-weight:700; letter-spacing:.6px;
+    text-transform:uppercase; color:var(--ok);
+  }
+  .turn .bubble{background:var(--panel)}
+  .turn .tool-line{display:flex; flex-direction:column; gap:6px}
+  .turn .tool-line > .who{color:var(--dim)}
+  .turn .reason-line{display:flex; flex-direction:column; gap:6px}
+  .turn .reason-line > .who{color:var(--dim)}
+
+  /* ---- grouped command card (one per turn) ---- */
+  details.cmd-group{
+    border:1px solid var(--line); border-radius:8px; background:var(--panel);
+    overflow:hidden; margin-bottom:6px;
+  }
+  details.cmd-group > summary{
+    cursor:pointer; padding:8px 12px; font-size:12.5px; color:var(--dim);
+    display:flex; align-items:center; gap:8px; user-select:none;
+  }
+  details.cmd-group > summary:hover{background:var(--panel2)}
+  details.cmd-group > summary::after{
+    content:'▸'; margin-left:auto; color:var(--dim); font-size:11px;
+    transition:transform .12s ease;
+  }
+  details.cmd-group[open] > summary::after{content:'▾'}
+  .grp-count{color:var(--fg); font-weight:600}
+  .grp-body{padding:8px; display:flex; flex-direction:column; gap:6px; background:var(--panel2)}
+  /* Nested command rows read as a list, not as separate cards. */
+  .grp-body details.cmd{border-radius:6px}
+  .grp-body details.cmd > summary{padding:6px 10px}
+
+  /* ---- divider between exchanges ---- */
+  .turn-sep{
+    display:flex; align-items:center; gap:10px;
+    margin:4px 0 14px;
+  }
+  .turn-sep-line{
+    flex:1; height:1px; background:var(--line);
+  }
+  .turn-sep-tag{
+    font-size:10.5px; font-weight:700; letter-spacing:.5px;
+    color:var(--dim); text-transform:uppercase; white-space:nowrap;
+    padding:2px 8px; border:1px solid var(--line); border-radius:10px;
+    background:var(--panel);
+  }
+
+  /* ---- markdown inside agent bubbles ---- */
+  .bubble.md{white-space:normal}      /* block elements handle their own spacing */
+  .bubble.md > *:first-child{margin-top:0}
+  .bubble.md > *:last-child{margin-bottom:0}
+  .bubble.md p{margin:0 0 8px}
+  .bubble.md h3,.bubble.md h4,.bubble.md h5,.bubble.md h6{
+    margin:12px 0 6px; font-size:14px; font-weight:700; line-height:1.4;
+  }
+  .bubble.md h3{font-size:15px}
+  .bubble.md ul,.bubble.md ol{margin:0 0 8px; padding-left:22px}
+  .bubble.md li{margin:2px 0}
+  .bubble.md blockquote{
+    margin:0 0 8px; padding:4px 10px; border-left:3px solid var(--line);
+    color:var(--dim);
+  }
+  .bubble.md hr{border:0; border-top:1px solid var(--line); margin:10px 0}
+  .bubble.md a{color:var(--accent); text-decoration:underline}
+  .bubble.md code{
+    background:var(--code); border:1px solid var(--line); border-radius:4px;
+    padding:1px 5px; font:12.5px/1.5 "Cascadia Mono",Consolas,monospace;
+  }
+  .md-code{position:relative; margin:0 0 8px}
+  /* Tables scroll horizontally rather than stretching the bubble. */
+  .md-table{
+    margin:0 0 8px; overflow-x:auto; border:1px solid var(--line); border-radius:6px;
+  }
+  .md-table table{border-collapse:collapse; width:100%; font-size:12.5px}
+  .md-table th, .md-table td{
+    padding:5px 9px; border-bottom:1px solid var(--line); border-right:1px solid var(--line);
+    text-align:left; vertical-align:top; white-space:nowrap;
+  }
+  .md-table th:last-child, .md-table td:last-child{border-right:0}
+  .md-table tbody tr:last-child td{border-bottom:0}
+  .md-table th{background:var(--panel2); font-weight:600; color:var(--fg)}
+  .md-table code{white-space:nowrap}
+  .md-code pre{
+    margin:0; padding:10px 12px; background:var(--code); border:1px solid var(--line);
+    border-radius:6px; overflow-x:auto;
+    font:12.5px/1.55 "Cascadia Mono",Consolas,monospace; white-space:pre;
+  }
+  .md-bar{
+    display:flex; align-items:center; justify-content:space-between;
+    gap:8px; margin-bottom:4px; min-height:18px;
+  }
+  .md-lang{font-size:10.5px; color:var(--dim); text-transform:lowercase}
+  .md-copy{
+    margin-left:auto; font-size:11px; line-height:1; padding:4px 9px;
+    color:var(--dim); background:transparent; border:1px solid var(--line);
+    border-radius:5px; cursor:pointer;
+  }
+  .md-copy:hover{color:var(--fg); border-color:var(--accent)}
+  .md-copy.done{color:var(--ok); border-color:var(--ok)}
+  details.cmd, details.think{
+    border-radius:8px; overflow:hidden;
+  }
+  details.cmd{border:1px solid var(--line); background:var(--panel)}
+  details.think{border:1px solid var(--thinkbd); background:var(--thinkbg)}
+  details.cmd summary, details.think summary{
+    cursor:pointer; padding:8px 12px; font-size:12.5px; color:var(--dim);
+    display:flex; align-items:center; gap:8px; user-select:none;
+  }
+  details.think summary{color:var(--thinkfg); font-style:italic}
+  details.cmd summary:hover{background:var(--panel2)}
+  details.think summary:hover{filter:brightness(1.06)}
+  /* An explicit affordance, so it is obvious the card expands. */
+  details.cmd summary::after{
+    content:'▸'; margin-left:auto; color:var(--dim); font-size:11px;
+    transition:transform .12s ease;
+  }
+  details.cmd[open] summary::after{content:'▾'}
+  /* A short echo of the command while folded; the full text lives in the body. */
+  details.cmd summary .cmd-peek{
+    color:var(--fg); font:12px/1.4 "Cascadia Mono",Consolas,monospace;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0;
+  }
+  /* The full command, shown only when the card is expanded. */
+  .cmd-line{
+    padding:8px 12px; border-top:1px solid var(--line); background:var(--code);
+  }
+  .cmd-line code{
+    display:block; font:12px/1.55 "Cascadia Mono",Consolas,monospace;
+    color:var(--fg); white-space:pre-wrap; word-break:break-word;
+  }
+  pre{
+    margin:0; padding:11px 13px; background:var(--code); overflow-x:auto;
+    font:12.5px/1.55 "Cascadia Mono",Consolas,monospace; white-space:pre-wrap; word-break:break-word;
+  }
+  .think-body{
+    padding:10px 13px; font-size:13px; line-height:1.7; color:var(--thinkfg);
+    white-space:pre-wrap; word-break:break-word; border-top:1px solid var(--thinkbd);
+  }
+  .pill{font-size:10.5px; padding:1px 7px; border-radius:999px; border:1px solid var(--line); color:var(--dim)}
+  .pill.ok{color:var(--ok); border-color:var(--ok)}
+  .pill.bad{color:var(--err); border-color:var(--err)}
+  .meta{font-size:11.5px; color:var(--dim); padding-left:2px}
+  .errbox{
+    border:1px solid var(--err); background:color-mix(in srgb, var(--err) 10%, transparent);
+    color:var(--err); border-radius:8px; padding:10px 13px; font-size:12.5px;
+    white-space:pre-wrap; word-break:break-word;
+  }
+  .thinking{display:flex; align-items:center; gap:9px; color:var(--dim); font-size:13px}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:p 1s infinite ease-in-out}
+  .dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
+  @keyframes p{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+
+  /* ---- composer ----------------------------------------------------- */
+  footer{flex:0 0 auto; border-top:1px solid var(--line); background:var(--panel); padding:12px 16px}
+  .composer{display:flex; gap:10px; align-items:flex-end}
+  textarea{
+    flex:1; min-width:0; resize:vertical; min-height:46px; max-height:280px; padding:10px 12px;
+    background:var(--code); color:var(--fg); border:1px solid var(--line); border-radius:8px;
+    font:inherit; line-height:1.5;
+  }
+  textarea:focus{outline:none; border-color:var(--accent)}
+  .statusline{display:flex; align-items:center; gap:10px; margin-top:9px; font-size:11.5px; color:var(--dim); flex-wrap:wrap}
+  .srv{
+    display:inline-flex; align-items:center; gap:5px;
+    padding:1px 7px; border:1px solid var(--line); border-radius:9px;
+    font-size:10.5px; white-space:nowrap; cursor:default;
+  }
+  .srv b{font-weight:600; color:var(--fg)}
+  /* A restart resets the counter, so a very short uptime is worth noticing. */
+  .srv.fresh{border-color:var(--accent); color:var(--accent)}
+  .srv.fresh b{color:var(--accent)}
+  .hidden{display:none !important}
+
+  /* ---- sessions sidebar --------------------------------------------- */
+  .sessions{
+    width:250px; flex:0 0 auto; background:var(--panel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; min-height:0;
+  }
+  .sessions.hidden{display:none}
+  .sessions-head{
+    padding:10px 12px; border-bottom:1px solid var(--line); display:flex; align-items:center;
+    gap:8px; flex:0 0 auto;
+  }
+  .sessions-head h2{font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); margin:0; flex:1}
+  .sessions-head button{padding:3px 8px; font-size:11px}
+  #sessionList{flex:1; overflow-y:auto; padding:6px}
+  .sess{
+    padding:8px 10px; border-radius:6px; cursor:pointer; border:1px solid transparent;
+    margin-bottom:3px; position:relative;
+  }
+  .sess:hover{background:var(--panel2)}
+  .sess.active{background:var(--userbg); border-color:var(--userbd)}
+  .sess-title{
+    font-size:12.5px; line-height:1.4; overflow:hidden; text-overflow:ellipsis;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word;
+  }
+  .sess-meta{font-size:10.5px; color:var(--dim); margin-top:3px; display:flex; gap:7px; align-items:center}
+  .sess-actions{position:absolute; top:6px; right:6px; display:none; gap:3px}
+  .sess:hover .sess-actions{display:flex}
+  .sess-actions button{padding:1px 6px; font-size:11px; line-height:1.5}
+  .sess-actions button.danger{border-color:var(--err); color:var(--err)}
+
+  /* ---- context meter ------------------------------------------------ */
+  .ctx{margin-top:9px}
+  .ctx-bar{
+    height:6px; border-radius:999px; background:var(--panel2); overflow:hidden;
+    border:1px solid var(--line);
+  }
+  .ctx-fill{height:100%; width:0%; background:var(--ok); transition:width .3s, background .3s}
+  .ctx-fill.warn{background:var(--warn)}
+  .ctx-fill.hot{background:var(--err)}
+  .ctx-label{font-size:11px; color:var(--dim); margin-top:4px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px}
+  .ctx-label b{color:var(--fg); font-weight:600}
+  /* While a turn runs the figure on screen is the PREVIOUS turn's: usage only
+     arrives at turn.completed, so this says so instead of looking broken. */
+  .ctx-label #ctxText.stale{opacity:.6}
+  .ctx-label #ctxStaleTag{font-size:10px; padding:1px 6px}
+  .ctx-marks{display:flex; flex-wrap:wrap; gap:5px; margin-top:5px}
+  .ctx-marks:empty{display:none}
+  .compact-pill{border-color:var(--warn); color:var(--warn); font-size:11px}
+  .compact-note{
+    border:1px solid var(--warn); border-radius:8px; padding:8px 12px; font-size:12.5px;
+    background:color-mix(in srgb, var(--warn) 12%, transparent); color:var(--fg);
+  }
+  .compact-note b{color:var(--warn)}
+
+  /* ---- attachments -------------------------------------------------- */
+  .attach-bar{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px}
+  .attach-bar:empty{display:none}
+  .chip{
+    display:inline-flex; align-items:center; gap:6px; padding:3px 8px; font-size:11.5px;
+    background:var(--panel2); border:1px solid var(--line); border-radius:999px; max-width:100%;
+  }
+  .chip span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:190px}
+  .chip button{
+    border:0; background:transparent; padding:0 2px; font-size:13px; line-height:1;
+    color:var(--dim); cursor:pointer;
+  }
+  .chip button:hover{color:var(--err)}
+  .chip.img{border-color:var(--accent)}
+  .chip-thumb{
+    width:22px; height:22px; border-radius:4px; object-fit:cover;
+    cursor:zoom-in; flex:0 0 auto; background:var(--code);
+  }
+  .chip-ico{flex:0 0 auto}
+
+  /* ---- folder picker modal ------------------------------------------ */
+  .overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex;
+    align-items:center; justify-content:center; z-index:50;
+  }
+  .modal{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    box-shadow:var(--shadow); width:min(560px,92vw); padding:16px 18px;
+  }
+  .modal h3{margin:0 0 6px; font-size:15px}
+  .modal p{margin:0 0 14px; font-size:12.5px; color:var(--dim); line-height:1.6}
+  .modal input{width:100%; padding:8px 10px; background:var(--code); color:var(--fg);
+    border:1px solid var(--line); border-radius:6px; font:inherit; margin-bottom:12px}
+  .modal-actions{display:flex; gap:8px; justify-content:flex-end}
+  @media(max-width:1000px){
+    main{position:relative}
+    aside{position:absolute;inset:0 auto 0 0;z-index:20;width:min(340px,90vw);box-shadow:var(--shadow)}
+    .sessions{width:220px}
+  }
+  @media(max-width:700px){
+    header{gap:6px;padding:8px;flex-wrap:wrap}
+    header .badge{display:none}
+    header button{padding:5px 8px;white-space:nowrap}
+    .sessions{position:absolute;inset:0 auto 0 0;z-index:20;width:min(280px,85vw);box-shadow:var(--shadow)}
+    #log{padding:12px}
+    footer{padding:10px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Codex GUI</h1>
+  <span class="badge" id="modelBadge">—</span>
+  <span class="badge" id="effortBadge">—</span>
+  <span class="badge" id="busyBadge">空闲</span>
+  <div class="spacer"></div>
+  <button id="btnSessions" title="显示/隐藏会话列表">会话</button>
+  <button id="btnTheme" class="icon" title="切换深色/浅色">🌗</button>
+  <button id="btnNew" title="开始新会话（丢弃当前上下文）">新会话</button>
+  <button id="btnClear" title="只清空显示，不动会话上下文">清屏</button>
+  <button id="btnSettings" title="显示/隐藏设置">设置</button>
+</header>
+
+<main>
+  <section class="sessions" id="sessionsPane">
+    <div class="sessions-head">
+      <h2>会话</h2>
+      <button id="btnRefreshSessions" title="刷新会话列表">刷新</button>
+    </div>
+    <div id="sessionList"></div>
+  </section>
+
+  <aside id="aside">
+    <div class="sect">
+      <h2>工作目录</h2>
+      <div class="field">
+        <div class="row-inline">
+          <input type="text" id="cwd" spellcheck="false" placeholder="E:\path\to\project">
+          <button id="btnPick" title="打开 Windows 文件夹选择框">浏览…</button>
+        </div>
+        <div class="recent" id="recent"></div>
+        <div class="hint">Codex 只能读写这个目录下的文件。</div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>模型</h2>
+      <div class="field">
+        <label for="model">模型</label>
+        <select id="model"></select>
+        <div class="hint" id="modelHint"></div>
+      </div>
+      <div class="field">
+        <label for="reasoningEffort">思维强度</label>
+        <select id="reasoningEffort"></select>
+        <div class="hint" id="effortHint"></div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>权限</h2>
+      <div class="field">
+        <label for="sandbox">权限模式</label>
+        <select id="sandbox">
+          <option value="workspace-write">工作区可写 · 自动审批（推荐）</option>
+          <option value="read-only">只读 · 不能改文件</option>
+          <option value="full-access">完全放开 · 无沙箱（危险）</option>
+        </select>
+        <div class="hint" id="permHint"></div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>联网搜索</h2>
+      <div class="field">
+        <label for="webSearch">网页搜索</label>
+        <select id="webSearch">
+          <option value="live">live · 实时联网（默认）</option>
+          <option value="cached">cached · 仅用缓存</option>
+          <option value="indexed">indexed · 仅用索引</option>
+          <option value="disabled">disabled · 完全关闭</option>
+        </select>
+        <div class="hint">⚠️ <code>codex exec</code> <b>默认就开启</b>联网搜索（没有 <code>--search</code> 这个参数，那是顶层命令的）。
+          想省额度或不希望它联网，就选 <code>disabled</code>。</div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>网络</h2>
+      <div class="field">
+        <label for="proxy">代理</label>
+        <input type="text" id="proxy" spellcheck="false" placeholder="http://127.0.0.1:7897">
+        <div class="hint"><b>必需项。</b>Codex 不读 Windows 系统代理，直连 <code>chatgpt.com</code> 会被墙。</div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>上下文</h2>
+      <div class="field">
+        <label for="contextWindow">窗口大小覆盖（留空 = 自动）</label>
+        <input type="text" id="contextWindow" spellcheck="false" placeholder="留空则按模型自动取值">
+        <div class="hint">默认<b>留空</b>，进度条按所选模型的真实窗口计算（来自
+          <code>codex debug models</code> 的 <code>context_window × effective_context_window_percent</code>）。
+          当前：<span id="ctxCatalogInfo">—</span><br>
+          只有想手工校准时才填数字。</div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>界面</h2>
+      <div class="field">
+        <label for="theme">主题</label>
+        <select id="theme">
+          <option value="dark">深色</option>
+          <option value="light">浅色</option>
+          <option value="system">跟随系统</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sect">
+      <h2>会话</h2>
+      <div class="field">
+        <label for="threadId">会话 ID（resume 用）</label>
+        <input type="text" id="threadId" spellcheck="false" placeholder="留空 = 新会话" readonly>
+        <div class="hint">每轮自动带上，保持上下文连续。点「新会话」清空。</div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="chat">
+    <!-- Quick jump between this session's prompts. A dot per prompt, hover for a
+         preview: without it there is no way to tell where a jump would land. -->
+    <nav class="jump-rail" id="jumpRail" aria-label="会话跳转"></nav>
+    <div class="jump-tip" id="jumpTip" hidden></div>
+    <div id="log"></div>
+    <footer>
+      <div class="attach-bar" id="attachBar"></div>
+      <div class="composer">
+        <button id="btnAttach" class="icon" title="添加文件（图片、文档、表格、压缩包…任意格式）">📎</button>
+        <input type="file" id="fileInput" multiple class="hidden">
+        <textarea id="prompt" placeholder="描述你要做的事…  （Enter 发送 · Shift+Enter 换行 · 可拖拽文件，或直接粘贴截图）"></textarea>
+        <button class="primary" id="btnSend">发送</button>
+        <button class="danger hidden" id="btnStop">停止</button>
+      </div>
+      <div class="ctx">
+        <div class="ctx-bar"><div class="ctx-fill" id="ctxFill"></div></div>
+        <div class="ctx-label">
+          <span id="ctxText">上下文：尚无数据</span>
+          <span id="ctxStaleTag" class="pill" hidden>上一轮</span>
+          <span id="ctxHint"></span>
+        </div>
+        <div class="ctx-marks" id="ctxMarks"></div>
+      </div>
+      <div class="statusline">
+        <span id="status">就绪</span>
+        <!-- Service uptime: shows at a glance whether the backend was restarted,
+             which matters because backend edits only take effect after a restart. -->
+        <span id="serverInfo" class="srv" hidden></span>
+        <span style="flex:1"></span>
+        <span id="usage"></span>
+      </div>
+    </footer>
+  </section>
+</main>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const log = $('log');
+  let settings = {};
+  let catalog = { models: [], fallbackEfforts: [] };
+  let threadId = '';
+  let busy = false;
+  let currentAgent = null;
+  let currentThinking = null;
+  let ready = false;
+  let historyLoading = false;
+  let historyRequest = 0;
+  let activeController = null;
+  let activeRunId = '';
+  let stopRequested = false;
+  let runFailed = false;
+  let pendingFiles = 0;
+  let attachmentGeneration = 0;
+  let usageModel = '';
+  let serverContextWindow = 0;
+  const settingsDrawerMedia = window.matchMedia('(max-width: 1000px)');
+  const sessionsDrawerMedia = window.matchMedia('(max-width: 700px)');
+  settingsDrawerMedia.addEventListener('change', (event) => $('aside').classList.toggle('hidden', event.matches));
+  sessionsDrawerMedia.addEventListener('change', (event) => $('sessionsPane').classList.toggle('hidden', event.matches));
+  const commandCards = new Map();
+
+  async function requestJSON(url, options = {}){
+    const response = await fetch(url, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+    return data;
+  }
+  function updateSendState(){
+    $('btnSend').disabled = !ready || busy || historyLoading || pendingFiles > 0;
+  }
+
+  // ------------------------------------------------------------------ theme
+  const mql = window.matchMedia('(prefers-color-scheme: light)');
+  function applyTheme(pref){
+    const resolved = pref === 'system' ? (mql.matches ? 'light' : 'dark') : pref;
+    document.documentElement.setAttribute('data-theme', resolved);
+  }
+  mql.addEventListener('change', () => {
+    if (($('theme').value || 'dark') === 'system') applyTheme('system');
+  });
+
+  // -------------------------------------------------------------- rendering
+  const scrollDown = () => { log.scrollTop = log.scrollHeight; };
+
+  /** Append a row at the end of the feed (conversation order). */
+  function row(cls, who, node){
+    const r = document.createElement('div');
+    r.className = 'row ' + cls;
+    if (who){ const w = document.createElement('div'); w.className = 'who'; w.textContent = who; r.appendChild(w); }
+    if (node) r.appendChild(node);
+    log.appendChild(r); scrollDown();
+    return r;
+  }
+
+  /**
+   * Insert a row just above the live reply, wrapping it in `.row.agent`.
+   *
+   * Tool cards and the "working" indicator both belong to the current turn and
+   * must stay above its reply: appending them at the end of the feed pushed the
+   * answer further down on every command, so the user could not read it until
+   * the run finished. Nesting them inside the turn's own card also keeps one
+   * turn's activity grouped together.
+   */
+  /** Everything inserted above the reply must belong to a card that exists. */
+  function requireAgentRow(){
+    if (agentRow && agentRow.isConnected) return agentRow;
+    return ensureAgentRow();
+  }
+
+  function insertBeforeAgentRow(node){
+    const host = requireAgentRow();
+    if (!host) return null;   // no active turn: nothing to attach to
+    const r = document.createElement('div');
+    r.className = 'row agent';
+    r.appendChild(node);
+    // Inside the turn card, immediately above the reply bubble.
+    host.insertBefore(r, agentBubble);
+    if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) scrollDown();
+    return r;
+  }
+
+  /** A tool card with its "Codex · 工具" label, placed above the live reply. */
+  function toolRow(node){
+    const host = requireAgentRow();
+    if (!host) return null;
+    const r = document.createElement('div');
+    r.className = 'tool-line';
+    const w = document.createElement('div');
+    w.className = 'who';
+    w.textContent = 'Codex · 工具';
+    r.appendChild(w);
+    r.appendChild(node);
+    host.insertBefore(r, agentBubble);
+    if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) scrollDown();
+    return r;
+  }
+
+  /** Hide empty placeholders so a tool card never occupies a blank line. */
+  function collapseIfEmpty(node){
+    if (node && node.isConnected && !node.textContent.trim()) node.remove();
+  }
+
+  /**
+   * Drop a turn card that produced nothing, and clear the module state either way.
+   *
+   * The reply card is created when the turn STARTS (that is what pins it to the
+   * bottom), so any path that ends or resets a turn without content would
+   * otherwise leave an empty bordered box behind.
+   *
+   * Emptiness is judged from settled content, never from whatever happens to be
+   * in the DOM at this instant: the transient "working" row must not count as
+   * content, and the card must survive if a tool ran or reasoning arrived.
+   */
+  function dropAgentRowIfEmpty(){
+    const row = agentRow;
+    resetAgentRow();
+    if (turnCardHasContent(row)) return;
+    if (row && row.isConnected) row.remove();
+  }
+
+  /** Nothing should be in flight right after a reset; make that true. */
+  function resetTurnView(){
+    dropAgentRowIfEmpty();
+    stopToolGroup();
+    currentThinking = null;
+  }
+
+  let turnCounter = 0;
+
+  function addUser(text, attachments){
+    // A new exchange starts here, so seal the previous turn's card. Without this
+    // the pinned reply card would sit ABOVE this new user message, because the
+    // card is appended when the turn began.
+    resetAgentRow();
+    stopToolGroup();
+    turnCounter++;
+    // Divider FIRST, then the prompt: the label opens the exchange it belongs to.
+    // Appending it after the message made it read as the tail of the PREVIOUS turn.
+    addTurnDivider(turnCounter);
+    const b = document.createElement('div'); b.className = 'bubble';
+    if (text){ const t = document.createElement('div'); t.textContent = text; b.appendChild(t); }
+    if (attachments && attachments.length) b.appendChild(buildAttachmentRow(attachments));
+    const r = row('user', '你', b);
+    // Anchor for the jump rail, so a dot can scroll straight to this prompt.
+    r.dataset.prompt = text || (attachments && attachments.length ? '（仅附件）' : '');
+    return r;
+  }
+
+  // ------------------------------------------------------- prompt jump rail
+  /**
+   * How many markers are visible before the rail scrolls. Capped at 10 as asked;
+   * the wheel reaches the rest.
+   */
+  const JUMP_VISIBLE_DOTS = 10;
+
+  /**
+   * Wheel over the rail scrolls the RAIL, not the conversation.
+   *
+   * Without this the wheel went to the feed behind it, so a rail taller than its
+   * box could not be scrolled at all (and the scrollbar is hidden by design).
+   * At either end the event is allowed through, so the page keeps scrolling
+   * naturally instead of trapping the wheel.
+   */
+  function onRailWheel(e){
+    const rail = $('jumpRail');
+    if (!rail || rail.scrollHeight <= rail.clientHeight) return;   // nothing to do
+    const atTop = rail.scrollTop <= 0;
+    const atBottom = rail.scrollTop + rail.clientHeight >= rail.scrollHeight - 1;
+    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) return;
+    e.preventDefault();
+    hideJumpTip();                       // it is positioned; it would go stale
+    railTouchedAt = Date.now();
+    rail.scrollTop += e.deltaY;
+    // Only the fades change here. Calling updateJumpActive() would re-derive the
+    // highlight from the CONVERSATION and scroll the rail back, which made
+    // "scroll up" impossible whenever the active prompt was near the bottom.
+    updateRailFades(rail);
+  }
+
+  /**
+   * When the user last scrolled the RAIL by hand.
+   *
+   * `updateJumpActive()` keeps the highlighted marker inside the rail's view. That
+   * is right when the CONVERSATION moves, but wrong while the user is browsing the
+   * rail: the highlight follows the conversation, so it would yank the rail back
+   * every time. Measured symptom: with prompt 13 active you could scroll DOWN but
+   * never UP -- each wheel-up was immediately undone.
+   */
+  let railTouchedAt = 0;
+
+  /** Fade whichever edge still has markers behind it. */
+  function updateRailFades(rail){
+    const r = rail || $('jumpRail');
+    if (!r) return;
+    r.classList.toggle('more-above', r.scrollTop > 2);
+    r.classList.toggle('more-below', r.scrollTop + r.clientHeight < r.scrollHeight - 2);
+  }
+
+  /** A rail of markers down the right edge: one per prompt, click to jump. */
+  function rebuildJumpRail(){
+    const rail = $('jumpRail');
+    if (!rail) return;
+    const users = [...log.querySelectorAll('.row.user')];
+    rail.style.setProperty('--jump-dots', String(JUMP_VISIBLE_DOTS));
+    rail.innerHTML = '';
+    users.forEach((row, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'jump-dot';
+      // The rail may hold far more dots than fit; every dot carries its own
+      // prompt index so a click can never be resolved by visual position.
+      b.dataset.index = String(i);
+      b.title = '';
+      const text = promptPreview(row.dataset.prompt);
+      b.setAttribute('aria-label', '第 ' + (i + 1) + ' 条：' + text.slice(0, 40));
+      b.addEventListener('click', () => jumpToPrompt(b.dataset.index));
+      b.addEventListener('mouseenter', () => showJumpTip(b, row, i));
+      b.addEventListener('focus', () => showJumpTip(b, row, i));
+      b.addEventListener('mouseleave', hideJumpTip);
+      b.addEventListener('blur', hideJumpTip);
+      rail.appendChild(b);
+    });
+    updateJumpActive();
+  }
+
+  /**
+   * Scroll a specific prompt to the top of the feed.
+   *
+   * Computed instead of using `scrollIntoView`: the explicit offset makes the
+   * landing position exact and independent of padding, scroll-margin and which
+   * ancestor the browser happens to pick as the scroll container. That mattered
+   * -- a report of "dot 10 goes to prompt 8" could not be explained by the
+   * captured-row version, and this removes the whole class of ambiguity.
+   */
+  function jumpToPrompt(index){
+    const users = [...log.querySelectorAll('.row.user')];
+    const row = users[Number(index)];
+    if (!row) return;
+    // A click IS an instruction to move: drop the "user is browsing the rail"
+    // guard so the rail follows the destination instead of staying put.
+    railTouchedAt = 0;
+    const target = row.offsetTop - log.offsetTop - 8;
+    const max = Math.max(0, log.scrollHeight - log.clientHeight);
+    log.scrollTo({ top: Math.max(0, Math.min(target, max)), behavior:'smooth' });
+  }
+
+  /** First non-empty line, collapsed to a readable length. */
+  function promptPreview(text){
+    const s = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!s) return '（空）';
+    return s.length > 120 ? s.slice(0, 120) + '…' : s;
+  }
+
+  function showJumpTip(dot, row, index){
+    const tip = $('jumpTip');
+    if (!tip) return;
+    const full = promptPreview(row.dataset.prompt);
+    tip.textContent = '';
+    const head = document.createElement('b');
+    head.textContent = '第 ' + (index + 1) + ' 条 · ';
+    tip.appendChild(head);
+    tip.appendChild(document.createTextNode(full.length > 300 ? full.slice(0, 300) + '…' : full));
+    // Align the tooltip with the dot it belongs to, clamped inside the panel.
+    const chat = document.querySelector('.chat');
+    const chatBox = chat.getBoundingClientRect();
+    const dotBox = dot.getBoundingClientRect();
+    tip.hidden = false;
+    const top = Math.max(6, Math.min(chatBox.height - tip.offsetHeight - 6, dotBox.top - chatBox.top - 6));
+    tip.style.top = top + 'px';
+  }
+
+  function hideJumpTip(){ const tip = $('jumpTip'); if (tip) tip.hidden = true; }
+
+  /**
+   * Mark the prompt whose exchange currently occupies the top of the feed, so
+   * the rail shows where you are while scrolling.
+   */
+  /**
+   * Mark the prompt whose exchange is nearest the top of the viewport.
+   *
+   * Nearest, not "the last one above a threshold": the final prompts cannot be
+   * scrolled to the very top (there is not enough content below them), so a
+   * threshold test left the highlight stuck several prompts behind what the eye
+   * sees -- reported as "I click 10 and it highlights 8".
+   */
+  function updateJumpActive(){
+    const rail = $('jumpRail');
+    if (!rail || !rail.children.length) return;
+    const users = [...log.querySelectorAll('.row.user')];
+    const anchor = log.getBoundingClientRect().top;
+    let active = 0, best = Infinity;
+    users.forEach((row, i) => {
+      const d = Math.abs(row.getBoundingClientRect().top - anchor);
+      // `<=` keeps the LATER prompt on a tie, which is the one being revealed.
+      if (d <= best){ best = d; active = i; }
+    });
+    [...rail.children].forEach((d, i) => d.classList.toggle('active', i === active));
+    // With more markers than fit, keep the highlighted one in view -- but only
+    // when the CONVERSATION moved. While the user is scrolling the rail itself,
+    // following the highlight would fight them (see railTouchedAt).
+    const dot = rail.children[active];
+    if (dot && Date.now() - railTouchedAt > 2500){
+      const dTop = dot.offsetTop, dBottom = dTop + dot.offsetHeight;
+      if (dTop < rail.scrollTop) rail.scrollTop = dTop - 4;
+      else if (dBottom > rail.scrollTop + rail.clientHeight) {
+        rail.scrollTop = dBottom - rail.clientHeight + 4;
+      }
+    }
+    updateRailFades(rail);
+  }
+
+  /**
+   * Attachment thumbnails for a replayed message.
+   *
+   * The prompt Codex received carried raw `<image path=...>` tags and a manifest;
+   * rollout.cjs strips that plumbing and returns the files as data instead.
+   * Browsers cannot load a local path, so images stream from /api/attach/raw.
+   */
+  function buildAttachmentRow(list){
+    const wrap = document.createElement('div');
+    wrap.className = 'att-row';
+    for (const a of list){
+      const cell = document.createElement('div');
+      cell.className = 'att';
+      cell.title = a.path || a.name;
+      if (a.isImage){
+        const img = document.createElement('img');
+        img.loading = 'lazy';
+        img.alt = a.name;
+        // Local bytes when we have them (instant, survives a missing file),
+        // otherwise stream from disk.
+        img.src = a.dataUrl || ('/api/attach/raw?path=' + encodeURIComponent(a.path || ''));
+        img.addEventListener('click', () => openImagePreview(a));
+        // A missing file must not leave a broken icon in the transcript.
+        img.addEventListener('error', () => {
+          if (a.dataUrl || !a.path) return;
+          cell.classList.add('att-missing');
+          cell.textContent = '🖼 ' + a.name;
+        });
+        cell.appendChild(img);
+      } else {
+        cell.classList.add('att-file');
+        cell.textContent = '📄 ' + a.name;
+      }
+      wrap.appendChild(cell);
+    }
+    return wrap;
+  }
+
+  /** The bridge reports workspace-relative paths; previews need absolute ones. */
+  function joinPath(base, rel){
+    if (!rel) return '';
+    if (/^[a-zA-Z]:[\\/]/.test(rel)) return rel;
+    const sep = (base.includes('\\') || /^[a-zA-Z]:$/.test(base)) ? '\\' : '/';
+    return String(base).replace(/[\\/]+$/, '') + sep + String(rel).replace(/^[\\/]+/, '').split('/').join(sep);
+  }
+
+  /** Full-size view of one attachment, capped to the viewport. */
+  function openImagePreview(a){
+    const back = document.createElement('div');
+    back.className = 'img-back';
+    const box = document.createElement('div');
+    box.className = 'img-box';
+    const img = document.createElement('img');
+    // Composer attachments carry their bytes already; replayed ones stream from
+    // disk because embedding them would bloat every session switch.
+    img.src = a.dataUrl || ('/api/attach/raw?path=' + encodeURIComponent(a.path || ''));
+    img.alt = a.name;
+    const cap = document.createElement('div');
+    cap.className = 'img-cap';
+    cap.textContent = a.name + (a.size ? ' · ' + fmtSize(a.size) : '');
+    const close = document.createElement('button');
+    close.className = 'img-close';
+    close.textContent = '关闭';
+    box.appendChild(img); box.appendChild(cap); box.appendChild(close);
+    back.appendChild(box);
+    const dismiss = () => { back.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') dismiss(); };
+    close.onclick = dismiss;
+    back.onclick = (e) => { if (e.target === back) dismiss(); };
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(back);
+  }
+
+  /** A labelled rule that opens each exchange. */
+  function addTurnDivider(n){
+    const d = document.createElement('div');
+    d.className = 'turn-sep';
+    const line = document.createElement('span');
+    line.className = 'turn-sep-line';
+    const tag = document.createElement('span');
+    tag.className = 'turn-sep-tag';
+    tag.textContent = '第 ' + (n || '?') + ' 轮';
+    d.appendChild(line);
+    d.appendChild(tag);
+    d.appendChild(line.cloneNode());
+    log.appendChild(d);
+    return d;
+  }
+
+  /**
+   * The current turn's card: one bordered container holding everything Codex
+   * produced for this turn (tool cards, reasoning, and the reply). It stays
+   * pinned to the bottom of the feed and tool activity is inserted before the
+   * reply inside it.
+   *
+   * Inside the card: [header] [tool cards...] [thinking] [reply bubble last]
+   */
+  let agentRow = null;
+  let agentBubble = null;
+
+  function ensureAgentRow(){
+    if (agentRow && agentRow.isConnected) return agentRow;
+    agentRow = document.createElement('div');
+    agentRow.className = 'row agent turn';
+    const head = document.createElement('div');
+    head.className = 'turn-head';
+    head.textContent = 'Codex';
+    agentRow.appendChild(head);
+    agentBubble = document.createElement('div');
+    agentBubble.className = 'bubble';
+    agentRow.appendChild(agentBubble);
+    log.appendChild(agentRow);
+    return agentRow;
+  }
+
+  function ensureAgent(){
+    ensureAgentRow();
+    return agentBubble;
+  }
+
+  /**
+   * Does this turn card hold anything the user would miss?
+   *
+   * Judged from settled content, never from what happens to be in the DOM right
+   * now: the transient "working" row must not count, and a pending empty reply
+   * bubble certainly must not.
+   */
+  function turnCardHasContent(row){
+    if (!row || !row.isConnected) return false;
+    if (row.querySelector('details.cmd')) return true;   // a tool ran
+    if (row.querySelector('.think')) return true;        // reasoning arrived
+    const bubble = row.querySelector('.bubble');
+    return !!(bubble && bubble.textContent.trim());       // replied
+  }
+
+  /**
+   * Start a fresh reply bubble for a new turn. Called when a turn begins (and
+   * when the view is reset), NOT between the streamed messages of one turn --
+   * those accumulate into the same bubble.
+   *
+   * An EMPTY pending card is deleted here, not merely forgotten: the card is
+   * created when the turn starts, so forgetting it left an orphaned empty box.
+   * That was a real bug -- the orphan sat in the feed while the next tool call
+   * created a second card, and only the second one was ever cleaned up.
+   * A card WITH content is kept (history replay resets between messages).
+   */
+  function resetAgentRow(){
+    const pending = agentRow;
+    agentRow = null;
+    agentBubble = null;
+    currentAgent = null;
+    agentMarkdown = '';
+    if (pending && pending.isConnected && !turnCardHasContent(pending)) pending.remove();
+  }
+
+  /**
+   * Append an assistant message.
+   *
+   * `separate` starts a NEW bubble. Consecutive messages inside ONE turn share a
+   * bubble (the reply accumulates while tools run), but replayed history must
+   * render one bubble per stored message -- merging them there would silently
+   * rewrite the transcript the user actually had.
+   */
+  /**
+   * Minimal Markdown renderer for agent replies.
+   *
+   * SECURITY: every string becomes a text node via textContent. `innerHTML` is
+   * never used with model output, so markdown cannot inject markup. That is why
+   * this is hand-rolled instead of pulling in a library that returns HTML.
+   *
+   * Supported: fenced code blocks, inline code, bold, italic, headings,
+   * blockquotes, unordered/ordered lists, links, horizontal rules.
+   */
+  function renderInline(src, parent){
+    const re = /(`[^`\n]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]\n]+\]\([^()\s]+\))|(https?:\/\/[^\s<>()]+)/g;
+    let last = 0, m;
+    while ((m = re.exec(src))){
+      if (m.index > last) parent.appendChild(document.createTextNode(src.slice(last, m.index)));
+      const tok = m[0];
+      if (tok.startsWith('`')){
+        const el = document.createElement('code');
+        el.textContent = tok.slice(1, -1);
+        parent.appendChild(el);
+      } else if (tok.startsWith('**')){
+        const el = document.createElement('strong');
+        renderInline(tok.slice(2, -2), el);
+        parent.appendChild(el);
+      } else if (tok.startsWith('*')){
+        const el = document.createElement('em');
+        renderInline(tok.slice(1, -1), el);
+        parent.appendChild(el);
+      } else if (tok.startsWith('[')){
+        const split = tok.indexOf('](');
+        const a = document.createElement('a');
+        a.textContent = tok.slice(1, split);
+        // Only http(s): the URL comes from the model.
+        const href = tok.slice(split + 2, -1);
+        if (/^https?:\/\//i.test(href)){ a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+        parent.appendChild(a);
+      } else {
+        const a = document.createElement('a');
+        a.textContent = tok;
+        a.href = tok;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        parent.appendChild(a);
+      }
+      last = m.index + tok.length;
+    }
+    if (last < src.length) parent.appendChild(document.createTextNode(src.slice(last)));
+  }
+
+  function renderMarkdownInto(src, host){
+    host.textContent = '';
+    const lines = String(src).replace(/\r\n?/g, '\n').split('\n');
+    let i = 0;
+    const flushParagraph = (buf) => {
+      if (!buf.length) return;
+      const p = document.createElement('p');
+      renderInline(buf.join('\n'), p);
+      host.appendChild(p);
+      buf.length = 0;
+    };
+    const para = [];
+
+    while (i < lines.length){
+      const line = lines[i];
+
+      // Fenced code block.
+      const fence = line.match(/^\s*(```|~~~)\s*([A-Za-z0-9+#._-]*)\s*$/);
+      if (fence){
+        flushParagraph(para);
+        const marker = fence[1], lang = fence[2];
+        const body = [];
+        i++;
+        while (i < lines.length && !new RegExp('^\\s*' + marker + '\\s*$').test(lines[i])) body.push(lines[i++]);
+        i++; // consume closing fence
+        const wrap = document.createElement('div');
+        wrap.className = 'md-code';
+        const bar = document.createElement('div');
+        bar.className = 'md-bar';
+        if (lang){
+          const tag = document.createElement('span');
+          tag.className = 'md-lang';
+          tag.textContent = lang;
+          bar.appendChild(tag);
+        }
+        const pre = document.createElement('pre');
+        pre.textContent = body.join('\n');
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'md-copy';
+        copy.textContent = '复制';
+        copy.addEventListener('click', () => {
+          // Copy the raw text, not the rendered nodes.
+          const text = pre.textContent;
+          const done = () => { copy.textContent = '已复制'; copy.classList.add('done');
+            setTimeout(() => { copy.textContent = '复制'; copy.classList.remove('done'); }, 1400); };
+          const fail = () => { copy.textContent = '复制失败';
+            setTimeout(() => { copy.textContent = '复制'; }, 1400); };
+          if (navigator.clipboard?.writeText){
+            navigator.clipboard.writeText(text).then(done, fail);
+          } else {
+            // Headless browsers and non-secure origins may not expose the API.
+            const ta = document.createElement('textarea');
+            ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy') ? done() : fail(); } catch { fail(); }
+            ta.remove();
+          }
+        });
+        bar.appendChild(copy);
+        wrap.appendChild(bar);
+        wrap.appendChild(pre);
+        host.appendChild(wrap);
+        continue;
+      }
+
+      // Table: a row with pipes, then a delimiter row of dashes and pipes.
+      // MUST be tested before the horizontal rule below: a delimiter row such as
+      // `|---|---|` also matches that rule, so checking the rule first would eat
+      // the delimiter line and leave the table mangled.
+      if (line.includes('|') && i + 1 < lines.length &&
+          /^[\s|:-]*-[\s|:-]*$/.test(lines[i + 1]) && lines[i + 1].includes('-')){
+        flushParagraph(para);
+        const splitRow = (r) => {
+          let t = r.trim();
+          if (t.startsWith('|')) t = t.slice(1);
+          if (t.endsWith('|')) t = t.slice(0, -1);
+          return t.split('|').map((c) => c.trim());
+        };
+        const head = splitRow(line);
+        const align = splitRow(lines[i + 1]).map((c) => {
+          const l = c.startsWith(':'), r = c.endsWith(':');
+          return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+        });
+        const body = [];
+        i += 2;
+        while (i < lines.length && lines[i].includes('|') && lines[i].trim()) body.push(splitRow(lines[i++]));
+
+        const box = document.createElement('div');
+        box.className = 'md-table';
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        const hr = document.createElement('tr');
+        head.forEach((cell, c) => {
+          const th = document.createElement('th');
+          if (align[c]) th.style.textAlign = align[c];
+          renderInline(cell, th);
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        for (const row of body){
+          const tr = document.createElement('tr');
+          // Pad or ignore extras so a ragged table cannot break the layout.
+          head.forEach((_h, c) => {
+            const td = document.createElement('td');
+            if (align[c]) td.style.textAlign = align[c];
+            renderInline(row[c] || '', td);
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        box.appendChild(table);
+        host.appendChild(box);
+        continue;
+      }
+
+      // Heading.
+      const h = line.match(/^(#{1,6})\s+(.*)$/);
+      if (h){
+        flushParagraph(para);
+        const el = document.createElement('h' + Math.min(h[1].length + 2, 6)); // keep it below the page's own h1/h2
+        renderInline(h[2], el);
+        host.appendChild(el);
+        i++;
+        continue;
+      }
+
+      // Horizontal rule.
+      if (/^\s*([-*_])\1{2,}\s*$/.test(line)){
+        flushParagraph(para);
+        host.appendChild(document.createElement('hr'));
+        i++;
+        continue;
+      }
+
+      // Blockquote.
+      if (/^\s*>\s?/.test(line)){
+        flushParagraph(para);
+        const q = document.createElement('blockquote');
+        const body = [];
+        while (i < lines.length && /^\s*>\s?/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ''));
+        renderInline(body.join('\n'), q);
+        host.appendChild(q);
+        continue;
+      }
+
+      // Lists.
+      const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+      const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      if (ul || ol){
+        flushParagraph(para);
+        const ordered = !!ol;
+        const list = document.createElement(ordered ? 'ol' : 'ul');
+        while (i < lines.length){
+          const mm = ordered ? lines[i].match(/^\s*\d+[.)]\s+(.*)$/) : lines[i].match(/^\s*[-*+]\s+(.*)$/);
+          if (!mm) break;
+          const li = document.createElement('li');
+          renderInline(mm[1], li);
+          list.appendChild(li);
+          i++;
+        }
+        host.appendChild(list);
+        continue;
+      }
+
+      // Blank line ends a paragraph.
+      if (!line.trim()){ flushParagraph(para); i++; continue; }
+
+      para.push(line);
+      i++;
+    }
+    flushParagraph(para);
+  }
+
+  /**
+   * Raw Markdown for the bubble currently being written. The bubble is
+   * re-rendered from this accumulator on every append: streaming arrives in
+   * chunks, and re-parsing the whole (small) reply keeps partial markdown
+   * consistent -- appending rendered fragments separately would break a code
+   * fence that spans two chunks.
+   */
+  let agentMarkdown = '';
+
+  /**
+   * Append an assistant message.
+   *
+   * `separate` starts a NEW turn card. It must be true only when this assistant
+   * message begins a turn (i.e. it directly follows a user message). One question
+   * can produce SEVERAL assistant messages -- those belong to the same turn and
+   * must share one card, or a single prompt renders as a stack of cards.
+   */
+  function addAgent(text, separate){
+    if (separate) resetAgentRow();
+    const b = ensureAgent();
+    agentMarkdown = agentMarkdown ? agentMarkdown + '\n\n' + text : text;
+    b.classList.remove('bubble-waiting');
+    b.classList.add('md');
+    renderMarkdownInto(agentMarkdown, b);
+    scrollDown();
+  }
+  /**
+   * Reasoning is OFF by design.
+   *
+   * Every model in the catalog reports `default_reasoning_summary = "none"`, so
+   * each Reasoning item arrives with empty `summary_text` and `raw_content`
+   * (verified against real rollouts: 102 items, all empty). There is nothing to
+   * render. On top of that, `codex exec --json` has no streaming, so a summary
+   * could only appear at the very END of a turn -- which is not what "watch it
+   * think" means.
+   *
+   * To bring it back: pass `-c model_reasoning_summary="concise"` in bridge.cjs
+   * and set showReasoning true in settings. Note it costs extra output tokens.
+   */
+  function addReasoning(item){
+    if (!settings.showReasoning) return;
+    // Shape differs by transport: `codex exec` sends `text`; the app-server
+    // protocol uses `content` / `summary` string arrays. Accept all of them.
+    let text = '';
+    if (typeof item.text === 'string') text = item.text;
+    else if (Array.isArray(item.content)) text = item.content.join('\n');
+    else if (Array.isArray(item.summary)) text = item.summary.join('\n');
+    text = (text || '').trim();
+    if (!text) return;
+
+    const d = document.createElement('details');
+    d.className = 'think';
+    const s = document.createElement('summary');
+    s.innerHTML = '<span class="pill">推理摘要</span>';
+    d.appendChild(s);
+    const body = document.createElement('div');
+    body.className = 'think-body';
+    body.textContent = text;
+    d.appendChild(body);
+    d.open = true;                       // visible by default; click to collapse
+    // Same anchoring rule as tool cards, so a turn reads consistently:
+    // tool cards -> reasoning -> reply.
+    const w = document.createElement('div');
+    w.className = 'who';
+    w.textContent = 'Codex · 思考';
+    const box = document.createElement('div');
+    box.className = 'reason-line';
+    box.appendChild(w);
+    box.appendChild(d);
+    ensureAgentRow();
+    agentRow.insertBefore(box, agentBubble);
+    if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) scrollDown();
+  }
+  /**
+   * Guards around programmatic open/close.
+   *
+   * `toggle` fires for scripted changes too, so without this a card we opened
+   * ourselves would be mistaken for one the USER opened -- and would then be
+   * exempt from the automatic fold, leaving the group permanently expanded.
+   *
+   * The mark is CONSUMED by the toggle handler. A timer cannot be used here:
+   * `toggle` is dispatched asynchronously and fires AFTER a `setTimeout(...,0)`
+   * has already cleared the flag (measured -- the bug survived the first fix).
+   */
+  let collapsingToolCards = false;
+
+  /** Open/close without the change being attributed to the user. */
+  function programmaticOpen(d, open){
+    d.dataset.scripted = '1';
+    d.open = open;
+  }
+
+  /** True once, for the scripted change that is still pending on this element. */
+  function consumeScripted(d){
+    if (d.dataset.scripted !== '1') return false;
+    delete d.dataset.scripted;
+    return true;
+  }
+
+  function collapseToolCards(){
+    collapsingToolCards = true;
+    for (const d of log.querySelectorAll('details.cmd, details.cmd-group')){
+      if (!d.open) continue;
+      if (d.dataset.userOpened === '1') continue;
+      programmaticOpen(d, false);
+    }
+    setTimeout(() => { collapsingToolCards = false; }, 0);
+  }
+
+  /**
+   * All commands from one turn live in ONE collapsible card.
+   *
+   * Reported problem: six commands produced six bordered cards that filled the
+   * screen, so the reply was pushed out of view. Grouping them means the turn
+   * stays compact by default and the commands are still one click away.
+   */
+  let toolGroup = null;
+  let toolGroupBox = null;
+  let toolGroupCount = 0;
+
+  function setUserOpened(d, on){
+    if (on) d.dataset.userOpened = '1'; else delete d.dataset.userOpened;
+  }
+
+  function stopToolGroup(){
+    toolGroup = null; toolGroupBox = null; toolGroupCount = 0;
+    // A new turn starts expanded again; the "user closed it" state belongs to the
+    // turn it was set in.
+  }
+
+  function ensureToolGroup(){
+    if (toolGroup && toolGroup.isConnected) return toolGroup;
+    toolGroup = document.createElement('details');
+    toolGroup.className = 'cmd-group';
+    const s = document.createElement('summary');
+    const label = document.createElement('span');
+    label.className = 'pill';
+    // Covers commands AND web searches, so "工具" is the accurate word.
+    label.textContent = '工具';
+    const count = document.createElement('span');
+    count.className = 'grp-count';
+    const state = document.createElement('span');
+    state.className = 'grp-state';
+    s.appendChild(label); s.appendChild(count); s.appendChild(state);
+    toolGroup.appendChild(s);
+    toolGroupBox = document.createElement('div');
+    toolGroupBox.className = 'grp-body';
+    toolGroup.appendChild(toolGroupBox);
+    toolGroupCount = 0;
+    // Collapsed by default when read from history; opened while a turn is live
+    // (see setToolGroupLive).
+    programmaticOpen(toolGroup, false);
+    toolGroup.addEventListener('toggle', () => {
+      if (consumeScripted(toolGroup)) return;              // our own change
+      // Remember a deliberate CLOSE separately from a deliberate open: while a
+      // turn runs the group is auto-opened for each command, and that must not
+      // override a user who closed it.
+      if (toolGroup.open) { setUserOpened(toolGroup, true); delete toolGroup.dataset.userClosed; }
+      else { setUserOpened(toolGroup, false); toolGroup.dataset.userClosed = '1'; }
+    });
+    // Same anchoring rule as everything else in a turn: above the reply.
+    ensureAgentRow();
+    agentRow.insertBefore(toolGroup, agentBubble);
+    if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) scrollDown();
+    return toolGroup;
+  }
+
+  /** During a live turn the group stays open so output is visible as it arrives. */
+  function setToolGroupLive(on){
+    const g = ensureToolGroup();
+    if (on){
+      programmaticOpen(g, true);
+      refreshToolGroupHeader();
+    }
+  }
+
+  function refreshToolGroupHeader(){
+    const g = ensureToolGroup();
+    const count = g.querySelector('.grp-count');
+    const state = g.querySelector('.grp-state');
+    const cards = toolGroupBox.querySelectorAll('details.cmd');
+    let done = 0, failed = 0;
+    for (const d of cards){
+      const e = d.dataset.exit;
+      if (e === '') continue;
+      if (e === '0') done++; else failed++;
+    }
+    count.textContent = toolGroupCount + ' 条';
+    if (failed) state.innerHTML = '<span class="pill bad">' + failed + ' 条失败</span>';
+    else if (done === toolGroupCount && toolGroupCount) state.innerHTML = '<span class="pill ok">全部成功</span>';
+    else state.innerHTML = '<span class="pill">执行中</span>';
+  }
+
+  /** One command row inside the group card. */
+  function cmdBody(item){
+    const d = document.createElement('details');
+    d.className = 'cmd';
+    const s = document.createElement('summary');
+    const st = item.status === 'completed'
+      ? (item.exit_code === 0 ? '<span class="pill ok">exit 0</span>'
+        : item.exit_code == null ? '<span class="pill">完成</span>'
+        : '<span class="pill bad">exit ' + item.exit_code + '</span>')
+      : '<span class="pill">执行中</span>';
+    // The summary holds ONLY the label, the exit status and a short single-line
+    // echo. The full command lives in the body: a long command in the summary
+    // kept the card wide open even when folded, which is exactly what folding is
+    // supposed to prevent.
+    s.innerHTML = st;
+    const peek = (item.command || '').replace(/\s+/g, ' ').trim();
+    if (peek){
+      const span = document.createElement('span');
+      span.className = 'cmd-peek';
+      span.textContent = peek.length > 64 ? peek.slice(0, 64) + '…' : peek;
+      s.appendChild(span);
+    }
+    d.appendChild(s);
+    if (item.command){
+      const head = document.createElement('div');
+      head.className = 'cmd-line';
+      const code = document.createElement('code');
+      code.textContent = item.command;
+      head.appendChild(code);
+      d.appendChild(head);
+    }
+    if (item.aggregated_output && item.aggregated_output.trim()){
+      const pre = document.createElement('pre'); pre.textContent = item.aggregated_output;
+      d.appendChild(pre);
+    }
+    return d;
+  }
+
+  function addCmd(item, replay){
+    const previous = item.id && commandCards.get(item.id);
+    const d = cmdBody(item);
+    d.dataset.exit = item.exit_code == null ? '' : String(item.exit_code);
+    if (previous && previous.isConnected){
+      previous.replaceWith(d);
+      if (previous.dataset.userOpened === '1') setUserOpened(d, true);
+    } else {
+      ensureToolGroup();
+      toolGroupBox.appendChild(d);
+      toolGroupCount++;
+      if (replay){
+        // Replayed from disk: this turn is already over, so the group stays
+        // folded -- a refreshed session must look like the finished turn it was.
+        programmaticOpen(d, false);
+      } else {
+        // Live: keep the group open so output is visible as it arrives -- but only
+        // until the user closes it. Re-opening on every new command silently
+        // undid their click, which is what "折叠失效" was.
+        if (toolGroup.dataset.userClosed !== '1') programmaticOpen(toolGroup, true);
+        programmaticOpen(d, item.status !== 'completed');
+      }
+    }
+    if (item.id) commandCards.set(item.id, d);
+    d.addEventListener('toggle', () => {
+      if (consumeScripted(d)) return;                      // our own change
+      if (d.open) setUserOpened(d, true);
+      else setUserOpened(d, false);
+    });
+    refreshToolGroupHeader();
+    if (replay) programmaticOpen(toolGroup, false);
+  }
+  /**
+   * A `web_search` item: `{ id, type, query, action, results }`.
+   *
+   * This is a TOOL activity like any command, so it goes INSIDE the turn's tool
+   * group -- before, it rendered on its own "Codex · 工具" line and was the only
+   * tool activity that did not fold away with the group.
+   */
+  function addWebSearch(item, replay){
+    const d = document.createElement('details');
+    d.className = 'cmd web';
+    const s = document.createElement('summary');
+    const q = (item.query || '').trim();
+    s.innerHTML = '<span class="pill">联网</span>';
+    if (q){
+      const span = document.createElement('span');
+      span.className = 'cmd-peek';
+      span.textContent = q.length > 64 ? q.slice(0, 64) + '…' : q;
+      s.appendChild(span);
+    } else {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = '无查询词';
+      s.appendChild(pill);
+    }
+    d.appendChild(s);
+    const head = document.createElement('div');
+    head.className = 'cmd-line';
+    const code = document.createElement('code');
+    code.textContent = JSON.stringify(item.action ?? {}, null, 2);
+    head.appendChild(code);
+    d.appendChild(head);
+    if (Array.isArray(item.results) && item.results.length){
+      const pre = document.createElement('pre');
+      pre.textContent = JSON.stringify(item.results, null, 2);
+      d.appendChild(pre);
+    }
+    d.dataset.exit = '0';               // a search has no exit code, but it finished
+    ensureToolGroup();
+    toolGroupBox.appendChild(d);
+    toolGroupCount++;
+    programmaticOpen(d, false);
+    d.addEventListener('toggle', () => {
+      if (consumeScripted(d)) return;
+      if (d.open) setUserOpened(d, true);
+      else setUserOpened(d, false);
+    });
+    refreshToolGroupHeader();
+    if (!replay) programmaticOpen(toolGroup, true);
+    else programmaticOpen(toolGroup, false);
+  }
+
+  function addError(text){
+    const b = document.createElement('div'); b.className = 'errbox'; b.textContent = text;
+    row('agent', '错误', b);
+  }
+  function addMeta(text){
+    const b = document.createElement('div'); b.className = 'meta'; b.textContent = text;
+    row('agent', '', b);
+  }
+  function showThinking(on){
+    if (on && !currentThinking){
+      const d = document.createElement('div');
+      d.className = 'thinking';
+      d.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span><span>Codex 正在处理…</span>';
+      // Same anchoring rule as tool cards: above the reply, never below it.
+      currentThinking = insertBeforeAgentRow(d);
+    } else if (!on && currentThinking){
+      currentThinking.remove(); currentThinking = null;
+    }
+  }
+  // ---------------------------------------------------------------- helpers
+  function setBusy(v){
+    busy = v;
+    updateSendState();
+    ['btnNew','btnClear','btnAttach','fileInput','btnPick','cwd','model','reasoningEffort','sandbox','webSearch','proxy','contextWindow'].forEach((id) => { $(id).disabled = v; });
+    $('btnStop').classList.toggle('hidden', !v);
+    const b = $('busyBadge');
+    b.textContent = v ? '运行中' : '空闲';
+    b.classList.toggle('on', !v);
+  }
+  const status = (t) => { $('status').textContent = t; };
+  const fmtNum = (n) => (n ?? 0).toLocaleString('en-US');
+
+  function autoGrow(){
+    const ta = $('prompt');
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 280) + 'px';
+  }
+
+  function showUsage(u){
+    if (!u) return;
+    const tot = (u.input_tokens || 0) + (u.output_tokens || 0);
+    const r = u.reasoning_output_tokens || 0;
+    $('usage').textContent =
+      '本轮 tokens ' + fmtNum(tot) +
+      '（输入 ' + fmtNum(u.input_tokens) +
+      ' · 缓存 ' + fmtNum(u.cached_input_tokens) +
+      ' · 输出 ' + fmtNum(u.output_tokens) +
+      (r ? ' · 推理 ' + fmtNum(r) : '') + '）';
+  }
+
+  // ------------------------------------------------------- model dropdowns
+  function fillEfforts(modelSlug){
+    const entry = catalog.models.find((m) => m.slug === modelSlug);
+    const list = (entry && entry.efforts.length) ? entry.efforts : (catalog.fallbackEfforts || []);
+    const sel = $('reasoningEffort');
+    const prev = sel.value;
+    sel.innerHTML = '';
+    const def = document.createElement('option');
+    def.value = '';
+    def.textContent = entry && entry.defaultEffort
+      ? '默认（' + entry.defaultEffort + '）'
+      : '默认';
+    sel.appendChild(def);
+    for (const e of list){
+      const o = document.createElement('option');
+      o.value = e.value;
+      o.textContent = e.value + (e.description ? ' · ' + e.description : '');
+      o.title = e.description || '';
+      sel.appendChild(o);
+    }
+    sel.value = [...sel.options].some((o) => o.value === prev) ? prev : '';
+
+    $('effortHint').textContent =
+      '推理强度影响耗时和用量；可显示的推理摘要取决于模型及 CLI 返回内容。';
+    updateBadges();
+  }
+
+  function updatePermHint(){
+    const key = $('sandbox').value;
+    const m = (catalog.permissionModes || []).find((x) => x.key === key);
+    if (!m){ $('permHint').textContent = ''; return; }
+
+    const resuming = !!threadId;
+    const warn = key === 'full-access';
+    // The command line differs between a fresh turn and a resumed one, because
+    // `codex exec resume` rejects the permission flags and takes -c overrides.
+    const shown = resuming ? m.resumeFlags : m.flags;
+    const label = resuming ? '续接会话时的参数' : '新会话时的参数';
+    let html = m.note +
+      '<br>' + label + '：<code>' + shown + '</code>';
+    if (resuming) html += '<br>续接保留会话原有沙箱；需要不同权限时请新建会话。';
+
+    if (resuming && key === 'workspace-write' && !m.resumeWritable){
+      html += '<br><b style="color:var(--warn)">⚠ ' + (m.resumeNote || '续接时此项无法授权写入') + '</b>';
+    }
+    if (warn) html += '<br><b style="color:var(--err)">⚠ 这会绕过沙箱保护</b>';
+    $('permHint').innerHTML = html;
+  }
+
+  function buildPermSelect(){
+    const sel = $('sandbox');
+    const modes = catalog.permissionModes || [];
+    if (!modes.length) return;   // keep the static options as a fallback
+    const keep = sel.value;
+    sel.innerHTML = '';
+    for (const m of modes){
+      const o = document.createElement('option');
+      o.value = m.key;
+      o.textContent = m.label + (m.writable ? '' : ' · 不能改文件');
+      sel.appendChild(o);
+    }
+    if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  }
+
+  function updateBadges(){
+    const slug = $('model').value;
+    const entry = catalog.models.find((m) => m.slug === slug);
+    $('modelBadge').textContent = '模型：' + (entry ? entry.name : '默认');
+    const chosen = $('reasoningEffort').value;
+    const eff = chosen || (entry && entry.defaultEffort) || '默认';
+    const badge = $('effortBadge');
+    badge.textContent = '思维：' + eff;
+    // The model CANNOT see its own reasoning effort -- it is a request parameter,
+    // not conversation content -- so "I can't see it" from Codex says nothing
+    // about whether the GUI set it. Surface the exact argument instead, so the
+    // setting is verifiable without asking the model.
+    const lines = [];
+    if (chosen) lines.push('实际发送：-c model_reasoning_effort="' + chosen + '"');
+    else if (entry && entry.defaultEffort) lines.push('未指定：Codex 将使用该模型的默认值（' + entry.defaultEffort + '）');
+    else lines.push('未指定：Codex 将使用它自己的默认值');
+    if (entry && Array.isArray(entry.efforts) && entry.efforts.length){
+      lines.push('该模型可选：' + entry.efforts.map((e) => e.value).join(', '));
+    }
+    lines.push('（思维强度是请求参数，模型看不到自己用了哪一档，问它是问不出来的）');
+    badge.title = lines.join('\n');
+    $('modelHint').textContent = entry ? entry.description : '不指定则用 Codex 的默认模型。';
+  }
+
+  function buildModelSelect(){
+    const sel = $('model');
+    sel.innerHTML = '';
+    const def = document.createElement('option');
+    def.value = ''; def.textContent = '默认（Codex 自选）';
+    sel.appendChild(def);
+    for (const m of catalog.models){
+      const o = document.createElement('option');
+      o.value = m.slug;
+      o.textContent = m.name + ' · ' + m.slug;
+      o.title = m.description || '';
+      sel.appendChild(o);
+    }
+  }
+
+  // ------------------------------------------------------ folder picker UI
+  function pickFolderModal(){
+    return new Promise((resolve) => {
+      const ov = document.createElement('div');
+      ov.className = 'overlay';
+      ov.innerHTML =
+        '<div class="modal">' +
+          '<h3>选择工作目录</h3>' +
+          '<p>点击「打开 Windows 选择框」会弹出系统原生的文件夹对话框' +
+          '（它可能出现在浏览器窗口<b>后面</b>，留意任务栏）。' +
+          '如果没能弹出，下面会显示原因；也可以直接粘贴路径。</p>' +
+          '<input type="text" id="_pickPath" spellcheck="false" placeholder="E:\\path\\to\\project">' +
+          '<div class="hint" id="_pickNote" style="margin:-6px 0 12px;min-height:16px"></div>' +
+          '<div class="modal-actions">' +
+            '<button id="_pickNative">打开 Windows 选择框</button>' +
+            '<button id="_pickCancel">取消</button>' +
+            '<button class="primary" id="_pickOk">确定</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(ov);
+      const inp = ov.querySelector('#_pickPath');
+      inp.value = $('cwd').value || '';
+      inp.focus();
+      const done = (v) => { ov.remove(); resolve(v); };
+      ov.querySelector('#_pickCancel').onclick = () => done(null);
+      ov.querySelector('#_pickOk').onclick = () => done(inp.value.trim());
+      ov.querySelector('#_pickNative').onclick = async (e) => {
+        const btn = e.currentTarget;
+        const note = ov.querySelector('#_pickNote');
+        btn.disabled = true; btn.textContent = '等待选择…';
+        note.textContent = '';
+        try {
+          const r = await (await fetch('/api/pick-folder', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ startIn: inp.value.trim() }),
+          })).json();
+          if (r.path){
+            inp.value = r.path;
+            note.textContent = '已选择：' + r.path;
+            note.style.color = 'var(--ok)';
+          } else if (r.canceled){
+            note.textContent = '已取消。';
+            note.style.color = 'var(--dim)';
+          } else {
+            // Surface the real reason instead of failing silently.
+            note.textContent = '选择框没能打开：' + (r.error || '未知原因');
+            note.style.color = 'var(--err)';
+          }
+        } catch (err){
+          note.textContent = '调用失败：' + err.message;
+          note.style.color = 'var(--err)';
+        }
+        btn.disabled = false; btn.textContent = '打开 Windows 选择框';
+      };
+      ov.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') done(null);
+        if (e.key === 'Enter' && e.target === inp) done(inp.value.trim());
+      });
+      ov.addEventListener('click', (e) => { if (e.target === ov) done(null); });
+    });
+  }
+
+  // ----------------------------------------------------------------- events
+  function handleCodex(ev){
+    switch (ev.type){
+      case 'thread.started':
+        threadId = ev.thread_id || '';
+        $('threadId').value = threadId;
+        // From the next turn on we are resuming, so the permission flags change.
+        updatePermHint();
+        break;
+      case 'turn.started':
+        status('Codex 已开始…'); break;
+      case 'item.started':
+        if (ev.item?.type === 'command_execution') addCmd(ev.item);
+        break;
+      case 'item.completed': {
+        const it = ev.item;
+        if (!it) break;
+        if (it.type === 'agent_message' && it.text){ showThinking(false); addAgent(it.text); }
+        else if (it.type === 'reasoning'){ showThinking(false); addReasoning(it); }
+        else if (it.type === 'web_search'){ showThinking(false); addWebSearch(it); }
+        else if (it.type === 'command_execution'){ addCmd(it); }
+        else addMeta('[' + it.type + ']');
+        break;
+      }
+      case 'turn.completed': {
+        showUsage(ev.usage);
+        if (ev.contextUsage){
+          usageModel = ev.model || usageModel;
+          serverContextWindow = ev.contextWindow || 0;
+          resolveCtxMax();
+          updateCtx({ input_tokens:ev.contextUsage.inputTokens, output_tokens:ev.contextUsage.outputTokens,
+            cached_input_tokens:ev.contextUsage.cachedInputTokens });
+        }
+        break;
+      }
+      case 'turn.failed': runFailed = true; addError(ev.error?.message || JSON.stringify(ev.error)); break;
+      case 'error': if (ev.message) addError(ev.message); break;
+      default: break;
+    }
+  }
+
+  // -------------------------------------------------------------- persistence
+  let persistQueue = Promise.resolve();
+  function persist(){
+    const body = {
+      cwd: $('cwd').value.trim(),
+      model: $('model').value,
+      reasoningEffort: $('reasoningEffort').value,
+      sandbox: $('sandbox').value,
+      permissionMode: $('sandbox').value,
+      webSearch: $('webSearch').value,
+      theme: $('theme').value,
+      proxy: $('proxy').value.trim(),
+      contextWindow: ctxMaxOverride > 0 ? ctxMaxOverride : 0,
+    };
+    settings = { ...settings, ...body };
+    persistQueue = persistQueue.catch(() => {}).then(async () => {
+      const saved = await requestJSON('/api/settings', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+      });
+      settings.recentDirs = saved.recentDirs;
+      renderRecent();
+    }).catch((error) => { addError('保存设置失败：' + error.message); });
+    return persistQueue;
+  }
+
+  function renderRecent(){
+    const box = $('recent'); box.innerHTML = '';
+    (settings.recentDirs || []).slice(0, 6).forEach((d) => {
+      const b = document.createElement('button');
+      b.textContent = d; b.title = d;
+      b.disabled = busy;
+      b.onclick = () => { if (!busy) { $('cwd').value = d; persist(); } };
+      box.appendChild(b);
+    });
+  }
+
+  // -------------------------------------------------------------------- send
+  async function send(){
+    const prompt = $('prompt').value.trim();
+    if ((!prompt && !attachments.length) || busy || historyLoading || pendingFiles || !ready) return;
+    const cwd = $('cwd').value.trim();
+    if (!cwd){ addError('请先选择工作目录。'); return; }
+    const sentAttachments = attachments.slice();
+    const payload = {
+      prompt, cwd,
+      model: $('model').value,
+      reasoningEffort: $('reasoningEffort').value,
+      sandbox: $('sandbox').value,
+      webSearch: $('webSearch').value,
+      proxy: $('proxy').value.trim(),
+      resumeThreadId: threadId,
+      attachments: attachments.map((a) => ({ name: a.name, dataBase64: a.dataBase64 })),
+    };
+    activeController = new AbortController();
+    activeRunId = '';
+    stopRequested = false;
+    runFailed = false;
+    setBusy(true);
+    status('检查工作目录…');
+    let accepted = false;
+    let sawExit = false;
+    try {
+      const chk = await requestJSON('/api/checkdir', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cwd}), signal: activeController.signal,
+      });
+      if (!chk.ok) throw new Error('工作目录无效：' + cwd + (chk.note ? '（' + chk.note + '）' : ''));
+      await persist();
+      if (activeController.signal.aborted) throw new DOMException('已停止', 'AbortError');
+      // New turn: a fresh reply bubble becomes the bottom anchor. Every tool card
+      // this turn is inserted above it, so the reply never gets pushed off screen.
+      resetAgentRow();
+      ensureAgentRow();
+      stopToolGroup();          // this turn gets its own grouped command card
+      showThinking(true);
+      status('启动 Codex…');
+      const resp = await fetch('/api/run', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload), signal: activeController.signal,
+      });
+      if (!resp.ok){
+        const error = await resp.json().catch(() => ({}));
+        throw new Error(error.error || ('桥接服务返回 ' + resp.status));
+      }
+      if (!resp.body) throw new Error('桥接服务未返回事件流');
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      const consume = (flush = false) => {
+        const frames = buf.split(/\r?\n\r?\n/);
+        buf = flush ? '' : (frames.pop() ?? '');
+        for (const frame of frames){
+          const lines = frame.split(/\r?\n/);
+          const evLine = lines.find((line) => line.startsWith('event:'));
+          const dataText = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n');
+          if (!evLine || !dataText) continue;
+          const name = evLine.slice(6).trim();
+          const data = JSON.parse(dataText);
+          if (name === 'codex') handleCodex(data);
+          else if (name === 'meta'){
+            accepted = true;
+            activeRunId = data.runId;
+            // Echo what was actually staged, so this turn's message shows the
+            // same thumbnails a reloaded session will show. Keep the local bytes
+            // as a fallback: if the staged path cannot be resolved the picture
+            // still renders instead of degrading to a broken image.
+            const localByName = new Map(sentAttachments.map((a) => [a.name, a]));
+            const staged = (data.attachments || []).map((s) => {
+              const local = localByName.get(s.name);
+              const dataUrl = (local && local.isImage && local.dataBase64)
+                ? 'data:' + (local.type || 'image/png') + ';base64,' + local.dataBase64 : '';
+              return {
+                name: s.name, size: s.size, isImage: s.isImage, dataUrl,
+                path: joinPath(data.cwd || $('cwd').value.trim(), s.rel || ''),
+              };
+            });
+            addUser(prompt, staged.length ? staged : sentAttachments.map((a) => ({
+              name: a.name, size: a.size, isImage: a.isImage, dataUrl:
+                a.isImage && a.dataBase64 ? 'data:' + (a.type || 'image/png') + ';base64,' + a.dataBase64 : '',
+            })));
+            if ($('prompt').value.trim() === prompt) $('prompt').value = '';
+            attachments = attachments.filter((a) => !sentAttachments.includes(a));
+            renderAttachments(); autoGrow();
+            // A new prompt means a new dot on the jump rail.
+            rebuildJumpRail();
+            $('usage').textContent = '';
+            // The meter cannot update during a turn (`codex exec --json` reports
+            // usage only at turn.completed), so make clear the figure on screen is
+            // the previous turn's rather than pretending it is live.
+            markCtxStale(true);
+            status('运行中 · ' + (data.cwd || ''));
+          }
+          else if (name === 'text'){ showThinking(false); addMeta(data.line); }
+          else if (name === 'stderr') addMeta('CLI 日志：\n' + data.text);
+          else if (name === 'fatal'){ runFailed = true; showThinking(false); addError(data.message); }
+          else if (name === 'exit'){
+            sawExit = true;
+            showThinking(false);
+            // The turn is over: fold the tool cards so the transcript settles
+            // into a readable summary instead of a wall of open output.
+            collapseToolCards();
+            status(data.stopped || stopRequested ? '已停止' : (data.code === 0 && !runFailed ? '完成' : '运行失败（退出码 ' + data.code + '）'));
+            if (data.code === 0 && threadId) loadSessions();
+          }
+        }
+      };
+      for(;;){
+        const { value, done } = await reader.read();
+        buf += done ? dec.decode() : dec.decode(value, { stream:true });
+        consume(done);
+        if (done) break;
+      }
+      if (!sawExit) throw new Error(runFailed ? 'Codex 未能启动' : '连接意外中断，未收到完成状态');
+    } catch (e){
+      if (stopRequested || e.name === 'AbortError') status('已停止');
+      else { addError(e.message); status(accepted ? '连接中断或运行失败' : '发送失败，输入和附件已保留'); }
+    } finally {
+      activeController?.abort();
+      activeController = null; activeRunId = '';
+      // Drop an empty turn card FIRST: showThinking(false) below removes the
+      // "working" row, which would make the card look non-empty to a later check.
+      dropAgentRowIfEmpty();
+      showThinking(false); setBusy(false); renderRecent();
+      // Also fold on the failure/abort paths, so a crashed run does not leave
+      // every card hanging open.
+      collapseToolCards();
+    }
+  }
+
+  // ------------------------------------------------------------------ wiring
+  // ------------------------------------------------------------ sessions
+  let sessions = [];
+
+  function fmtTime(epochSec){
+    if (!epochSec) return '';
+    const d = new Date(epochSec * 1000);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    if (sameDay) return hh + ':' + mm;
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm;
+  }
+
+  function sessionLabel(s){
+    const t = (s.title || '').trim();
+    if (t) return t;
+    const p = (s.preview || '').trim();
+    if (p) return p;
+    return '(无标题会话)';
+  }
+
+  function renderSessions(){
+    const box = $('sessionList');
+    box.innerHTML = '';
+    if (!sessions.length){
+      const d = document.createElement('div');
+      d.className = 'meta';
+      d.style.padding = '10px';
+      d.textContent = '还没有会话。发一条消息就开始。';
+      box.appendChild(d);
+      return;
+    }
+    for (const s of sessions){
+      const el = document.createElement('div');
+      el.className = 'sess' + (s.id === threadId ? ' active' : '');
+      el.title = sessionLabel(s) + '\n' + s.id;
+      const t = document.createElement('div');
+      t.className = 'sess-title';
+      t.textContent = sessionLabel(s);
+      el.appendChild(t);
+      const m = document.createElement('div');
+      m.className = 'sess-meta';
+      m.textContent = fmtTime(s.updatedAt || s.createdAt) + (s.model ? ' · ' + s.model : '');
+      el.appendChild(m);
+
+      const acts = document.createElement('div');
+      acts.className = 'sess-actions';
+      const bRename = document.createElement('button');
+      bRename.textContent = '✎'; bRename.title = '重命名';
+      bRename.onclick = async (e) => {
+        e.stopPropagation();
+        if (busy) return;
+        const cur = (s.title || '').trim();
+        const name = window.prompt('会话标题：', cur || sessionLabel(s).slice(0, 60));
+        if (name === null) return;
+        const r = await fetch('/api/sessions/rename', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ threadId: s.id, name }),
+        }).then((x) => x.json()).catch(() => ({ ok: false }));
+        if (r.ok){ s.title = r.name; renderSessions(); }
+        else addError('重命名失败：' + (r.error || '未知错误'));
+      };
+      const bDel = document.createElement('button');
+      bDel.className = 'danger'; bDel.textContent = '🗑'; bDel.title = '删除会话';
+      bDel.onclick = async (e) => {
+        e.stopPropagation();
+        if (busy || historyLoading) return;
+        if (!window.confirm('删除这个会话？此操作不可恢复。\n\n' + sessionLabel(s))) return;
+        const r = await fetch('/api/sessions/delete', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ threadId: s.id }),
+        }).then((x) => x.json()).catch(() => ({ ok: false }));
+        if (r.ok){
+          sessions = sessions.filter((x) => x.id !== s.id);
+          if (s.id === threadId) $('btnNew').onclick();
+          renderSessions();
+          status('会话已删除');
+        } else addError('删除失败：' + (r.error || '未知错误'));
+      };
+      acts.appendChild(bRename); acts.appendChild(bDel);
+      el.appendChild(acts);
+
+      el.onclick = () => switchSession(s);
+      box.appendChild(el);
+    }
+  }
+
+  async function loadSessions(){
+    try {
+      const r = await (await fetch('/api/sessions')).json();
+      if (r.error) { addMeta('会话列表不可用：' + r.error); return; }
+      const next = r.sessions || [];
+      // An empty reply must not wipe a list we already have. The session reader
+      // can come back empty for transient reasons (app-server restart, not yet
+      // ready), and replacing the sidebar with "还没有会话" reads as "all your
+      // conversations are gone" -- alarming and wrong.
+      if (!next.length && sessions.length && !force){
+        addMeta('会话列表暂时为空，保留上次的结果。');
+        return;
+      }
+      sessions = next;
+      renderSessions();
+    } catch (e) {
+      addMeta('会话列表加载失败：' + e.message);
+    }
+  }
+
+  /**
+   * Switch to a saved session.
+   *
+   * `codex exec resume` only emits the NEW turn, so history cannot come from the
+   * event stream. It is rebuilt from the rollout JSONL via /api/history, which
+   * also returns Codex's own token accounting for the last turn.
+   */
+  async function switchSession(s){
+    if (busy) { status('请先停止当前任务，再切换会话'); return; }
+    const requestId = ++historyRequest;
+    historyLoading = true; updateSendState();
+    if (sessionsDrawerMedia.matches) $('sessionsPane').classList.add('hidden');
+    threadId = s.id;
+    $('threadId').value = threadId;
+    log.innerHTML = '';
+    resetTurnView();
+    turnCounter = 0;          // turn numbering is per session, not per page
+    resetThreadTracking();
+    attachmentGeneration++;
+    attachments = [];
+    renderAttachments();
+    if (s.cwd) $('cwd').value = s.cwd;
+    addMeta('—— 已切换到会话：' + sessionLabel(s) + ' ——');
+    status('正在读取历史…');
+    updatePermHint();
+    // The list is re-rendered on EVERY exit path below (see the wrapper), so a
+    // raced or failed switch can never leave the sidebar showing stale/empty state.
+    renderSessions();
+
+    let h;
+    try {
+      h = await (await fetch('/api/history?threadId=' + encodeURIComponent(threadId))).json();
+    } catch (e) {
+      if (requestId !== historyRequest){ renderSessions(); return; }
+      historyLoading = false; updateSendState();
+      addError('读取历史失败：' + e.message);
+      status('已切换会话（历史不可用）');
+      renderSessions();
+      return;
+    }
+    if (requestId !== historyRequest){ renderSessions(); return; }
+    historyLoading = false; updateSendState();
+    if (h.cwd) $('cwd').value = h.cwd;
+    if (h.permissionMode) $('sandbox').value = h.permissionMode;
+    const savedModel = h.model || s.model || '';
+    if (catalog.models.some((model) => model.slug === savedModel)) {
+      $('model').value = savedModel;
+      fillEfforts(savedModel); updateBadges();
+    }
+    updatePermHint();
+    usageModel = h.model || s.model || '';
+    serverContextWindow = h.contextWindow || 0;
+    resolveCtxMax();
+
+    if (h.error) addError('读取历史出错：' + h.error);
+    const msgs = h.messages || [];
+    if (!msgs.length){
+      addMeta(h.found
+        ? '这个会话没有可回放的对话内容。'
+        : '找不到该会话的记录文件（可能已被删除）。');
+    } else {
+      let previousRole = '';
+      for (const m of msgs){
+        // Commands and reasoning are replayed through the SAME helpers the live
+        // stream uses, so a refreshed session looks identical to what the user
+        // just watched -- including the grouped, collapsed command card.
+        if (m.kind === 'command' && m.item){ addCmd({ ...m.item, status: 'completed' }, true); continue; }
+        if (m.kind === 'web_search' && m.item){ addWebSearch(m.item, true); continue; }
+        if (m.kind === 'reasoning' && m.item){ addReasoning(m.item); continue; }
+        if (m.role === 'user'){ addUser(m.text, m.attachments); previousRole = 'user'; }
+        else {
+          // A new card only when the turn starts; consecutive assistant messages
+          // from the same prompt stay in one card.
+          addAgent(m.text, previousRole === 'user');
+          previousRole = 'assistant';
+        }
+      }
+      stopToolGroup();
+      // One bubble per assistant message; close it before the footer note.
+      resetAgentRow();
+      addMeta('—— 以上为历史记录（共 ' + msgs.length + ' 条），继续发消息即可接着聊 ——');
+    }
+    rebuildJumpRail();
+
+    // Restore the meter from Codex's own numbers for the last turn.
+    if (h.usage){
+      updateCtx({
+        input_tokens: h.usage.inputTokens,
+        cached_input_tokens: h.usage.cachedInputTokens,
+        output_tokens: h.usage.outputTokens,
+        reasoning_output_tokens: h.usage.reasoningOutputTokens,
+      });
+    }
+    status('已切换会话');
+  }
+
+  // --------------------------------------------------------- attachments
+  let attachments = [];   // { name, size, isImage, dataBase64 }
+
+  const IMG_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
+
+  function fmtSize(n){
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function renderAttachments(){
+    const bar = $('attachBar');
+    bar.innerHTML = '';
+    attachments.forEach((a, i) => {
+      const c = document.createElement('div');
+      c.className = 'chip' + (a.isImage ? ' img' : '');
+      c.title = a.name;
+      if (a.isImage && a.dataBase64){
+        // Show the picture itself: a filename tells the user nothing about
+        // whether they pasted the right screenshot. The bytes are already here.
+        const src = 'data:' + (a.type || 'image/png') + ';base64,' + a.dataBase64;
+        const img = document.createElement('img');
+        img.className = 'chip-thumb';
+        img.src = src;
+        img.alt = a.name;
+        img.addEventListener('click', () => openImagePreview({
+          name: a.name, size: a.size, path: '', dataUrl: src,
+        }));
+        c.appendChild(img);
+      } else {
+        const ico = document.createElement('span');
+        ico.className = 'chip-ico';
+        ico.textContent = a.isImage ? '🖼' : '📄';
+        c.appendChild(ico);
+      }
+      const label = document.createElement('span');
+      label.textContent = a.name + ' · ' + fmtSize(a.size);
+      c.appendChild(label);
+      const x = document.createElement('button');
+      x.textContent = '×'; x.title = '移除';
+      x.onclick = () => { attachments.splice(i, 1); renderAttachments(); };
+      c.appendChild(x);
+      bar.appendChild(c);
+    });
+  }
+
+  function addFiles(fileList){
+    if (busy) return 0;
+    const files = Array.from(fileList || []);
+    if (!files.length) return 0;
+    let accepted = 0;
+    const generation = attachmentGeneration;
+    for (const f of files){
+      const isImage = IMG_RE.test(f.name) || /^image\//.test(f.type);
+      if (f.size > 25 * 1024 * 1024){
+        addError('「' + f.name + '」超过 25 MB，已跳过。');
+        continue;
+      }
+      if (attachments.length + pendingFiles >= 20 || attachments.reduce((sum, a) => sum + a.size, 0) + pendingFileBytes + f.size > 50 * 1024 * 1024){
+        addError('附件最多 20 个，总大小不能超过 50 MB。');
+        continue;
+      }
+      accepted++;
+      pendingFiles++; pendingFileBytes += f.size; updateSendState();
+      const reader = new FileReader();
+      const finishRead = () => { pendingFiles--; pendingFileBytes -= f.size; renderAttachments(); updateSendState(); };
+      reader.onload = () => {
+        const s = String(reader.result || '');
+        const comma = s.indexOf(',');
+        if (generation === attachmentGeneration) attachments.push({
+          name: f.name,
+          size: f.size,
+          isImage,
+          type: f.type || '',
+          dataBase64: comma >= 0 ? s.slice(comma + 1) : '',
+        });
+        finishRead();
+      };
+      reader.onerror = () => {
+        addError('读取「' + f.name + '」失败。');
+        finishRead();
+      };
+      reader.readAsDataURL(f);
+    }
+    return accepted;
+  }
+  let pendingFileBytes = 0;
+
+  /**
+   * Attach image extensions for a clipboard blob. A pasted screenshot arrives
+   * with an empty name, and unnamed attachments are both confusing in the tray
+   * and indistinguishable from each other later.
+   */
+  function pastedName(file, index){
+    if (file.name && file.name !== 'image.png') return file.name;
+    const ext = ({ 'image/png':'png', 'image/jpeg':'jpg', 'image/gif':'gif',
+      'image/webp':'webp', 'image/bmp':'bmp' })[file.type] || 'png';
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    return 'pasted-' + stamp + (index ? '-' + (index + 1) : '') + '.' + ext;
+  }
+
+  /**
+   * Paste files straight into the composer. Images are the common case (Win+
+   * Shift+S screenshots), but any clipboard file works.
+   */
+  function handlePaste(e){
+    const items = e.clipboardData?.items;
+    if (!items || busy) return;
+    const files = [];
+    for (const it of items){
+      if (it.kind !== 'file') continue;
+      const f = it.getAsFile();
+      if (f) files.push(f);
+    }
+    if (!files.length) return;   // plain text: let the browser paste it
+    const named = files.map((f, i) => (f.name && f.name !== 'image.png')
+      ? f : new File([f], pastedName(f, i), { type: f.type || 'image/png' }));
+    if (addFiles(named) > 0) e.preventDefault();   // don't also paste a filename
+  }
+
+  // -------------------------------------------------------------- context
+  // Last-call input + output estimates current context. Cached/reasoning tokens
+  // are subsets; whole-turn billing totals are unsuitable for this meter.
+  let ctxMax = 0;            // the denominator: this thread's usable budget
+  let ctxMaxOverride = 0;    // manual override from settings (0 = use catalog)
+
+  function resolveCtxMax(){
+    if (ctxMaxOverride > 0){
+      ctxMax = ctxMaxOverride;
+      $('ctxCatalogInfo').textContent = '手动覆盖为 ' + fmtNum(ctxMaxOverride);
+      return;
+    }
+    const m = catalog.models.find((x) => x.slug === ($('model').value || usageModel));
+    // Prefer the usable budget (what Codex actually allows before compacting);
+    // fall back to the nominal window, then to a conservative default.
+    const catalogUsable = (m && (m.usableContextWindow || m.contextWindow)) || 272000;
+    ctxMax = catalogUsable;
+    if (serverContextWindow > 0){
+      // Trust the session's OWN figure: it is what Codex reports as this thread's
+      // real budget (measured 828,400 for gpt-6.1-sol, i.e. 872,000 x 95%), and a
+      // real budget is the honest denominator for "how full am I".
+      ctxMax = serverContextWindow;
+    }
+    // Detail (nominal window) belongs here, in the settings hint -- not in the
+    // meter, where a second number just looks like a second denominator.
+    $('ctxCatalogInfo').textContent = m
+      ? (m.name + '：标称窗口 ' + fmtNum(m.contextWindow) + '，本会话预算 ' + fmtNum(ctxMax) +
+         (serverContextWindow > 0 ? '（由 Codex 报告）' : '（目录推算）'))
+      : (fmtNum(ctxMax) + '（目录中无此模型，用默认值）');
+  }
+
+  /** Clear the meter only. Compaction history deliberately survives a turn. */
+  function resetCtx(){
+    $('ctxFill').style.width = '0%';
+    $('ctxFill').className = 'ctx-fill';
+    $('ctxText').textContent = '上下文：尚无数据';
+    $('ctxHint').textContent = '';
+    markCtxStale(false);
+  }
+
+  /**
+   * Flag the meter as showing the PREVIOUS turn's figure.
+   *
+   * `codex exec --json` emits usage exactly once, at turn.completed, so nothing
+   * can update mid-turn. Saying "上一轮" is honest; leaving a stale number
+   * unlabelled reads as "the context estimate is broken".
+   */
+  function markCtxStale(on){
+    const el = $('ctxText');
+    el.classList.toggle('stale', !!on);
+    const tag = $('ctxStaleTag');
+    if (tag) tag.hidden = !on;
+    if (!on) return;
+  }
+
+  /** Called when the thread changes, not between turns of the same thread. */
+  function resetThreadTracking(){
+    commandCards.clear();
+    usageModel = ''; serverContextWindow = 0;
+    resolveCtxMax();
+    resetCtx();
+    resetCompactionTracking();
+  }
+
+  // ------------------------------------------------------------ compaction
+  // A large drop is only a possible compaction, not an authoritative event.
+  let ctxLastUsed = 0;        // previous turn's context size
+  let ctxPeakUsed = 0;        // high-water mark for this thread
+  let compactionCount = 0;
+
+  function resetCompactionTracking(){
+    ctxLastUsed = 0;
+    ctxPeakUsed = 0;
+    compactionCount = 0;
+    $('ctxMarks').innerHTML = '';
+  }
+
+  function reportCompaction(prev, now){
+    compactionCount++;
+    // Transcript marker
+    const d = document.createElement('div');
+    d.className = 'compact-note';
+    d.innerHTML = '<span class="pill">可能已压缩</span> 上下文从 <b>' + fmtNum(prev) +
+      '</b> 回落到 <b>' + fmtNum(now) + '</b>（释放 ' +
+      fmtNum(Math.max(0, prev - now)) + ' tokens）';
+    row('agent', '', d);
+    // Persistent badge in the meter row
+    const b = document.createElement('span');
+    b.className = 'pill compact-pill';
+    b.textContent = '# ' + compactionCount + ' 可能压缩于 ' + fmtNum(prev) + ' → ' + fmtNum(now);
+    $('ctxMarks').appendChild(b);
+    // Once per thread is a deliberate notification; more than that is noise.
+    addMeta('检测到可能的上下文压缩：这是本会话第 ' + compactionCount + ' 次推断。' +
+      '这是按上下文回落推断的，模型切换或上下文裁剪也可能造成回落。');
+  }
+
+  function updateCtx(u){
+    if (!u) return;
+    // CORRECT context size = what was sent + what came back.
+    // `cached_input_tokens` is a SUBSET of `input_tokens` (verified against
+    // Codex's own token_usage_record), so adding it double-counts the prompt --
+    // which is exactly why an earlier version of this meter read ~2x too high.
+    const sent = (u.input_tokens || 0) + (u.output_tokens || 0);
+    const used = sent;
+    const pct = ctxMax > 0 ? Math.min(100, (used / ctxMax) * 100) : 0;
+    const fill = $('ctxFill');
+    fill.style.width = pct.toFixed(1) + '%';
+    fill.className = 'ctx-fill' + (pct >= 85 ? ' hot' : pct >= 65 ? ' warn' : '');
+
+    // One numerator, one denominator. Showing both the reported budget AND the
+    // catalog's nominal window produced "37,523 / 828,400可用 / 500,000窗口",
+    // which reads as three numbers and invites exactly the question "which one is
+    // the denominator?". The budget IS the denominator; the nominal window is
+    // detail, and lives in the settings hint (ctxCatalogInfo) instead.
+    const cached = u.cached_input_tokens || 0;
+    $('ctxText').innerHTML = '上下文估计：<b>' + fmtNum(used) + '</b> / ' + fmtNum(ctxMax) +
+      ' （' + pct.toFixed(1) + '%）' +
+      (cached ? ' · 缓存命中 ' + Math.round(cached / Math.max(1, u.input_tokens || 1) * 100) + '%' : '');
+    // A fresh figure arrived, so it is no longer stale.
+    markCtxStale(false);
+
+    // --- compaction inference ---
+    // Require a substantial relative drop and a plausible previous size.
+    const MIN_PREV = Math.max(6000, ctxMax * 0.12);
+    const dropped = ctxLastUsed > MIN_PREV && used < ctxLastUsed * 0.6;
+    if (dropped) reportCompaction(ctxLastUsed, used);
+
+    ctxLastUsed = used;
+    ctxPeakUsed = Math.max(ctxPeakUsed, used);
+
+    if (pct >= 85){
+      $('ctxHint').textContent = '接近上限，压缩可能随时发生';
+    } else if (compactionCount > 0){
+      $('ctxHint').textContent = '疑似压缩 ' + compactionCount + ' 次 · 本会话峰值 ' + fmtNum(ctxPeakUsed);
+    } else if (pct >= 65){
+      $('ctxHint').textContent = '已过半，注意长会话开销';
+    } else {
+      $('ctxHint').textContent = '';
+    }
+  }
+
+  $('btnSend').onclick = send;
+  $('btnStop').onclick = async () => {
+    if (!busy) return;
+    stopRequested = true; status('正在停止…');
+    if (!activeRunId) { activeController?.abort(); return; }
+    try {
+      await requestJSON('/api/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({runId:activeRunId}) });
+    } catch (error) { activeController?.abort(); addError('停止请求失败：' + error.message); }
+  };
+  $('btnClear').onclick = () => { log.innerHTML = ''; resetTurnView(); renderRecent(); rebuildJumpRail(); hideJumpTip(); };
+  $('btnNew').onclick = () => {
+    if (busy) return;
+    historyRequest++; historyLoading = false;
+    attachmentGeneration++;
+    updateSendState();
+    attachments = []; renderAttachments();
+    // Start a fresh thread AND clear the transcript, so repeatedly pressing this
+    // cannot stack markers (it used to append one every click).
+    threadId = '';
+    $('threadId').value = '';
+    log.innerHTML = '';
+    resetTurnView();
+    turnCounter = 0;
+    resetThreadTracking();
+    $('usage').textContent = '';
+    addMeta('—— 新会话 ——');
+    status('已开始新会话');
+    renderSessions();
+    updatePermHint();
+    rebuildJumpRail();
+    hideJumpTip();
+    $('prompt').focus();
+  };
+  $('btnSettings').onclick = () => {
+    $('aside').classList.toggle('hidden');
+    if (sessionsDrawerMedia.matches) $('sessionsPane').classList.add('hidden');
+  };
+  $('btnSessions').onclick = () => {
+    $('sessionsPane').classList.toggle('hidden');
+    if (settingsDrawerMedia.matches) $('aside').classList.add('hidden');
+  };
+  $('btnRefreshSessions').onclick = () => { status('刷新会话列表…'); loadSessions(); };
+  $('btnAttach').onclick = () => $('fileInput').click();
+  $('fileInput').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+
+  // Drag and drop files anywhere over the transcript or composer.
+  ['dragover','drop'].forEach((evt) => {
+    document.addEventListener(evt, (e) => {
+      e.preventDefault();
+      if (evt === 'drop' && e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+    });
+  });
+  document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    document.body.style.outline = '2px dashed var(--accent)';
+    document.body.style.outlineOffset = '-6px';
+  });
+  document.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget === null){
+      document.body.style.outline = '';
+      document.body.style.outlineOffset = '';
+    }
+  });
+  document.addEventListener('drop', () => {
+    document.body.style.outline = '';
+    document.body.style.outlineOffset = '';
+  });
+  $('btnTheme').onclick = () => {
+    const order = ['dark','light','system'];
+    const next = order[(order.indexOf($('theme').value) + 1) % order.length];
+    $('theme').value = next; applyTheme(next); persist();
+  };
+  $('btnPick').onclick = async () => {
+    const picked = await pickFolderModal();
+    if (picked){ $('cwd').value = picked; persist(); }
+  };
+
+  $('prompt').addEventListener('paste', handlePaste);
+  // Scrolling the feed moves the rail's active marker.
+  log.addEventListener('scroll', updateJumpActive, { passive:true });
+  // Hovering the rail and turning the wheel scrolls the rail itself.
+  $('jumpRail').addEventListener('wheel', onRailWheel, { passive:false });
+  window.addEventListener('resize', () => { updateJumpActive(); hideJumpTip(); });
+  $('prompt').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    // Enter sends; Shift+Enter and Ctrl/Cmd+Enter insert a newline instead.
+    // `isComposing` guards IME candidates: Enter that picks a Chinese candidate
+    // must not send the message.
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    e.preventDefault(); send();
+  });
+  $('prompt').addEventListener('input', autoGrow);
+
+  $('model').addEventListener('change', () => {
+    serverContextWindow = 0;
+    resetCompactionTracking();
+    fillEfforts($('model').value);
+    resolveCtxMax();
+    resetCtx();
+    persist();
+  });
+  $('reasoningEffort').addEventListener('change', () => { updateBadges(); persist(); });
+  $('theme').addEventListener('change', () => { applyTheme($('theme').value); persist(); });
+  ['cwd','sandbox','proxy','webSearch','contextWindow'].forEach((id) => {
+    $(id).addEventListener('change', () => {
+      if (id === 'contextWindow'){
+        ctxMaxOverride = Number($('contextWindow').value) || 0;
+        resolveCtxMax();
+        resetCtx();
+      }
+      if (id === 'sandbox') updatePermHint();
+      persist();
+    });
+  });
+
+  /**
+   * Service start time + uptime in the status line.
+   *
+   * Backend edits (bridge.cjs and friends) only take effect after a restart, so
+   * seeing "running 3 days" is the fastest way to notice you are looking at stale
+   * code. The counter comes from the service's own `startedAt`, not from when this
+   * page loaded -- a page refresh must NOT reset it.
+   */
+  let serverStartedAt = 0;
+  let serverTick = null;
+
+  function fmtDuration(ms){
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    // Two units at most, and never a trailing zero unit ("1天0小时" -> "1天").
+    if (d > 0) return h ? d + '天' + h + '小时' : d + '天';
+    if (h > 0) return m ? h + '小时' + m + '分' : h + '小时';
+    if (m > 0) return sec ? m + '分' + sec + '秒' : m + '分';
+    return sec + '秒';
+  }
+
+  function renderServerInfo(){
+    const el = $('serverInfo');
+    if (!el || !serverStartedAt) return;
+    const up = Date.now() - serverStartedAt;
+    el.hidden = false;
+    el.innerHTML = '运行 <b>' + fmtDuration(up) + '</b>';
+    // A fresh restart is when new backend code goes live: worth a highlight.
+    el.classList.toggle('fresh', up < 60000);
+  }
+
+  function showServerInfo(health){
+    const started = Date.parse(health.startedAt || '');
+    if (!Number.isFinite(started)) return;
+    serverStartedAt = started;
+    const pad = (n) => String(n).padStart(2, '0');
+    const when = new Date(started);
+    $('serverInfo').title = '服务启动于 ' + when.getFullYear() + '-' + pad(when.getMonth() + 1) + '-' +
+      pad(when.getDate()) + ' ' + pad(when.getHours()) + ':' + pad(when.getMinutes()) + ':' +
+      pad(when.getSeconds()) + '\npid ' + (health.pid ?? '?') + ' · v' + (health.version || '?') +
+      '\n（刷新页面不会重置；后端代码改动需要重启服务才生效）';
+    renderServerInfo();
+    if (serverTick) clearInterval(serverTick);
+    serverTick = setInterval(renderServerInfo, 1000);
+  }
+
+  // -------------------------------------------------------------------- boot
+  updateSendState();
+  (async () => {
+    try {
+      const health = await requestJSON('/api/health');
+      if (!health.capabilities?.scopedStop){
+        addError('桥接服务需要重启才能使用修复后的界面。当前任务结束后，请先停止服务（Codex GUI (stop) 快捷方式或 stop-codex-gui.cmd），再重新启动。');
+        status('等待重启 Codex GUI');
+        return;
+      }
+      showServerInfo(health);
+      [settings, catalog] = await Promise.all([
+        requestJSON('/api/settings'),
+        requestJSON('/api/models'),
+      ]);
+    } catch {
+      addError('无法连接桥接服务。请确认 bridge.cjs 正在运行。');
+      return;
+    }
+
+    buildModelSelect();
+    if (settingsDrawerMedia.matches) $('aside').classList.add('hidden');
+    if (sessionsDrawerMedia.matches) $('sessionsPane').classList.add('hidden');
+    buildPermSelect();
+    $('cwd').value = settings.cwd || '';
+    $('model').value = settings.model || '';
+    $('sandbox').value = settings.permissionMode || settings.sandbox || 'workspace-write';
+    updatePermHint();
+    $('webSearch').value = settings.webSearch || 'live';
+    $('theme').value = settings.theme || 'dark';
+    $('proxy').value = settings.proxy || '';
+    ctxMaxOverride = Number(settings.contextWindow) || 0;
+    $('contextWindow').value = ctxMaxOverride > 0 ? String(ctxMaxOverride) : '';
+    applyTheme($('theme').value);
+
+    fillEfforts($('model').value);
+    $('reasoningEffort').value = settings.reasoningEffort || '';
+    resolveCtxMax();
+    updateBadges();
+    renderRecent();
+    renderAttachments();
+    resetCtx();
+    resetTurnView();   // a freshly loaded page must not show an empty turn card
+
+    status('就绪');
+    ready = true; updateSendState();
+    $('prompt').focus();
+    loadSessions();
+  })();
+})();
+</script>
+</body>
+</html>
