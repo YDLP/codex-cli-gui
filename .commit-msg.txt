@@ -1,0 +1,10 @@
+Make a cold start look idle, not grey
+
+Reported: "启动之后我不点击会话它也是灰的，点击某个具体会话之后才是绿的".
+
+The badge carried its state only in JS: setBusy() set data-state, and nothing called it until the first session switch (or the first turn). Between page load and that click the element had no data-state at all, so none of the state rules matched and it fell back to the dim default while the text already read 空闲.
+
+- data-state="idle" is now in the markup, so the state is correct before any script runs
+- init calls setBusy(false) once, so the badge text, the stop button and the disabled controls all agree from the first frame
+
+The new check runs first, before any session is opened, and asserts the badge is already idle and already green.

@@ -710,7 +710,9 @@
   <h1>Codex GUI</h1>
   <span class="badge" id="modelBadge">—</span>
   <span class="badge" id="effortBadge">—</span>
-  <span class="badge" id="busyBadge">空闲</span>
+  <!-- data-state is in the markup, not only set by JS: before the first turn the
+       badge used to have no state at all and rendered grey while saying "空闲". -->
+  <span class="badge" id="busyBadge" data-state="idle">空闲</span>
   <div class="spacer"></div>
   <button id="btnSessions" title="显示/隐藏会话列表">会话</button>
   <button id="btnFind" class="icon" title="在本次会话中搜索（Ctrl+F）">🔍</button>
@@ -3997,6 +3999,7 @@
 
     status('就绪');
     ready = true; updateSendState();
+    setBusy(false);    // a cold start is idle, and must look idle without a click
     $('prompt').focus();
     loadSessions();
   })();

@@ -163,6 +163,22 @@ async function main(){
     };
   })()`);
   await check('initial page starts without JavaScript exceptions',async()=>{assert.deepEqual(errors,[]);assert.equal(await evaluate("$test('btnSend').disabled"),false);});
+  await check('a cold start already looks idle',async()=>{
+    // Reported: "启动之后我不点击会话它也是灰的，点击某个具体会话之后才是绿的".
+    // The badge only learned its state from setBusy(), which ran on the first
+    // session switch -- so a fresh page showed grey next to the word 空闲.
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      state: $test('busyBadge').dataset.state,
+      text: $test('busyBadge').textContent,
+      color: getComputedStyle($test('busyBadge')).color,
+      sessionsClicked: !!document.querySelector('#sessionList .sess.active')
+    })`));
+    console.log('       cold-start badge:', JSON.stringify(st));
+    assert.equal(st.text,'空闲');
+    assert.equal(st.state,'idle','the markup must carry the idle state before any click: '+JSON.stringify(st));
+    assert.equal(st.color,'rgb(63, 185, 80)','and it must already be green: '+JSON.stringify(st));
+    assert.equal(st.sessionsClicked,false,'this check must run before any session is opened');
+  });
   await check('the status line shows the service uptime',async()=>{
     const info=JSON.parse(await evaluate(`JSON.stringify({
       hidden:document.getElementById('serverInfo').hidden,
