@@ -37,6 +37,15 @@ if (args[0] === 'app-server') {
     emit({ type:'turn.started' });
     if (prompt.startsWith('WAIT')) { setInterval(() => {}, 1000); return; }
     if (prompt.startsWith('FAIL_EVENT')) { emit({type:'turn.failed',error:{message:'fixture failure'}}); return; }
+    // A transport hiccup reported through the `error` event: this is a retry
+    // notice, not a failure, and must not render as a red error box.
+    if (prompt.startsWith('RECONNECT')) {
+      emit({ type:'error', message:'Reconnecting... 2/5 (stream disconnected before completion: tls handshake eof)' });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      emit({ type:'item.completed', item:{ type:'agent_message', text:'重连后继续：DONE' } });
+      emit({ type:'turn.completed', usage:{input_tokens:1000,output_tokens:50,reasoning_output_tokens:0,cached_input_tokens:0} });
+      return;
+    }
     // Prompts starting with BIG report a huge context, so a following ordinary
     // turn looks like a large drop -- the only signal compaction inference has.
     const big = prompt.startsWith('BIG');

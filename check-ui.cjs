@@ -340,6 +340,28 @@ async function main(){
   await check('turn failure with a zero process exit still shows failure',async()=>{
     await evaluate("$test('btnNew').click();$test('prompt').value='FAIL_EVENT';$test('btnSend').click()");
     await waitUI("!$test('btnSend').disabled && $test('status').textContent.includes('运行失败')");
+    // A real failure is still a red error box.
+    assert.ok(await evaluate("document.querySelectorAll('#log .errbox').length") >= 1,
+      'a failed turn must show an error box');
+  });
+  await check('a reconnect notice is not dressed up as a failure',async()=>{
+    // Reported as a scary red box for "Reconnecting... 2/5 (stream disconnected
+    // before completion: tls handshake eof)" -- which is Codex RETRYING, and the
+    // turn continues if a later attempt connects.
+    await evaluate("$test('btnNew').click();$test('prompt').value='RECONNECT';$test('btnSend').click()");
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",8000);
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      notes:document.querySelectorAll('#log .notebox').length,
+      errors:document.querySelectorAll('#log .errbox').length,
+      noteText:(document.querySelector('#log .notebox')||{}).textContent||'',
+      reply:(document.querySelector('#log .bubble.md')||{}).textContent||''
+    })`));
+    console.log('       reconnect notice:', JSON.stringify(st));
+    assert.equal(st.notes,1,'the retry notice must render as a notice: '+JSON.stringify(st));
+    assert.equal(st.errors,0,'a retry notice must NOT render as an error: '+JSON.stringify(st));
+    assert.match(st.noteText,/2\/5/,'the attempt count is kept: '+JSON.stringify(st));
+    assert.match(st.noteText,/tls handshake eof/,'the reason is kept: '+JSON.stringify(st));
+    assert.match(st.reply,/DONE/,'the turn must still finish: '+JSON.stringify(st));
   });
   await check('stop includes the current run id and releases the UI',async()=>{
     await evaluate("$test('btnNew').click();$test('prompt').value='WAIT browser';$test('btnSend').click()");

@@ -380,6 +380,12 @@
     color:var(--err); border-radius:8px; padding:10px 13px; font-size:12.5px;
     white-space:pre-wrap; word-break:break-word;
   }
+  /* A retry notice: same shape as an error, but it must not look like a failure. */
+  .notebox{
+    border:1px solid var(--line); background:var(--panel2);
+    color:var(--dim); border-radius:8px; padding:7px 12px; font-size:12.5px;
+    white-space:pre-wrap; word-break:break-word;
+  }
   .thinking{display:flex; align-items:center; gap:9px; color:var(--dim); font-size:13px}
   .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:p 1s infinite ease-in-out}
   .dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
@@ -2234,6 +2240,32 @@
     const b = document.createElement('div'); b.className = 'errbox'; b.textContent = text;
     row('agent', '错误', b);
   }
+
+  /**
+   * Is this `error` event just Codex telling us it is retrying?
+   *
+   * Measured shape: `Reconnecting... 2/5 (stream disconnected before completion:
+   * tls handshake eof)`. The turn survives if a later attempt connects, so this
+   * is a notice, not a failure.
+   */
+  function isTransientNotice(message){
+    const s = String(message || '');
+    return /^\s*Reconnecting/i.test(s) || /stream disconnected/i.test(s) || /tls handshake/i.test(s);
+  }
+
+  /** A retry notice: dim, counted, and carrying the reason without alarm. */
+  function addTransientNotice(message){
+    const raw = String(message || '');
+    const m = raw.match(/(\d+)\s*\/\s*(\d+)/);
+    let detail = raw.replace(/^\s*Reconnecting[^()]*/i, '').trim();
+    detail = detail.replace(/^\(+/, '').replace(/\)+$/, '').trim();
+    const b = document.createElement('div');
+    b.className = 'notebox';
+    b.textContent = '网络中断，正在自动重连' +
+      (m ? '（' + m[1] + '/' + m[2] + '）' : '') +
+      (detail ? ' · ' + detail : '');
+    row('agent', '提示', b);
+  }
   function addMeta(text){
     const b = document.createElement('div'); b.className = 'meta'; b.textContent = text;
     row('agent', '', b);
@@ -2487,7 +2519,17 @@
         break;
       }
       case 'turn.failed': runFailed = true; addError(ev.error?.message || JSON.stringify(ev.error)); break;
-      case 'error': if (ev.message) addError(ev.message); break;
+      case 'error':
+        // Codex reports routine transport trouble through the SAME `error` event it
+        // uses for real failures. "Reconnecting... 2/5 (stream disconnected before
+        // completion: tls handshake eof)" is a RETRY notice -- if the next attempt
+        // works, the turn carries on. A red error box for that reads as "it broke",
+        // which is exactly how it was reported. Only a failed turn stays red.
+        if (ev.message){
+          if (isTransientNotice(ev.message)) addTransientNotice(ev.message);
+          else addError(ev.message);
+        }
+        break;
       default: break;
     }
   }
