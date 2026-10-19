@@ -2631,8 +2631,10 @@
     }
     sel.value = [...sel.options].some((o) => o.value === prev) ? prev : '';
 
+    // Reasoning is never rendered (see addReasoning): the models report no summary
+    // and there is no toggle, so promising a "可显示的推理摘要" was simply wrong.
     $('effortHint').textContent =
-      '推理强度影响耗时和用量；可显示的推理摘要取决于模型及 CLI 返回内容。';
+      '推理强度越高，耗时和用量越大；推理过程本身不显示。';
     updateBadges();
   }
 
