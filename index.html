@@ -94,6 +94,7 @@
   .ts-search[hidden]{display:none}
   .ts-search input{width:220px; padding:3px 8px; font-size:12.5px}
   .ts-count{color:var(--dim); font-size:11.5px; min-width:44px; text-align:center}
+  .ts-count.has-hidden{cursor:help; text-decoration:underline dotted; text-underline-offset:2px}
   /* Every hit is marked; the one you are on is stronger, so "3/12" has a referent. */
   mark.ts-hit{background:rgba(255,205,0,.32); color:inherit; border-radius:2px}
   mark.ts-hit.cur{background:var(--accent); color:#fff}
@@ -1196,6 +1197,7 @@
   let tsQuery = '';
   let tsHits = [];
   let tsIndex = -1;
+  let tsHidden = 0;          // occurrences inside folded cards
 
   function tsClearMarks(){
     for (const m of log.querySelectorAll('mark.ts-hit')){
@@ -1206,10 +1208,26 @@
     }
     tsHits = [];
     tsIndex = -1;
+    tsHidden = 0;
   }
 
   function tsUpdateCount(){
-    $('tsCount').textContent = tsHits.length ? (tsIndex + 1) + '/' + tsHits.length : '0/0';
+    const el = $('tsCount');
+    el.textContent = tsHits.length ? (tsIndex + 1) + '/' + tsHits.length : '0/0';
+    // MEASURED: a search for a word in a tool's output counted 44 invisible hits
+    // and the counter read "1/72" while the first one you could see was on screen.
+    // Folded content is not marked, but pretending it does not exist would be its
+    // own lie -- so it is reported here.
+    el.title = tsHidden ? '另有 ' + tsHidden + ' 处在折叠的工具/文件卡片里' : '';
+    el.classList.toggle('has-hidden', tsHidden > 0);
+  }
+
+  /** Is this text node actually rendered? Closed <details> content is not. */
+  function tsVisible(node){
+    const p = node.parentElement;
+    if (!p) return false;
+    if (typeof p.checkVisibility === 'function') return p.checkVisibility();
+    return p.offsetParent !== null;
   }
 
   function tsGoto(i){
@@ -1245,6 +1263,13 @@
       if (tsHits.length >= MAX_HITS) break;
       const text = node.nodeValue || '';
       const hay = text.toLowerCase();
+      // Count what is folded away, but do not mark it: a highlight you cannot see
+      // still lands in the counter and makes "41/72" meaningless.
+      if (!tsVisible(node)){
+        let from = 0, at;
+        while ((at = hay.indexOf(lower, from)) !== -1){ tsHidden++; from = at + lower.length; }
+        continue;
+      }
       const frag = document.createDocumentFragment();
       let from = 0, at, last = 0;
       while ((at = hay.indexOf(lower, from)) !== -1 && tsHits.length < MAX_HITS){

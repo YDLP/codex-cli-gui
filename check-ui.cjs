@@ -314,6 +314,49 @@ async function main(){
       'Session A user1|Session A answer1|Session A user2|Session A answer2',
       'the transcript text must be unchanged after clearing the search');
   });
+  await check('search ignores text folded away inside closed cards',async()=>{
+    // Reported with a screenshot: searching "irmq" showed "41/72" while the first
+    // hit was on screen -- the other 40 lived inside COLLAPSED tool cards, so the
+    // counter counted text nobody could see. Measured then: 72 marks, 44 hidden,
+    // first visible at index 40.
+    await evaluate(`(() => {
+      const d=document.createElement('details'); d.id='foldProbe'; d.className='cmd';
+      const s=document.createElement('summary'); s.textContent='折叠的工具卡片';
+      const body=document.createElement('div'); body.className='grp-body';
+      const p=document.createElement('div'); p.textContent='xyzzy one xyzzy two';
+      body.appendChild(p); d.appendChild(s); d.appendChild(body);
+      document.getElementById('log').appendChild(d);
+    })()`);
+    await evaluate("$test('btnFind').click()");
+    await waitUI("!$test('tsSearch').hidden");
+    await evaluate(`(() => { const i=$test('tsInput'); i.value='xyzzy';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await sleep(300);
+    const folded=JSON.parse(await evaluate(`JSON.stringify({
+      marks:document.querySelectorAll('#log mark.ts-hit').length,
+      count:$test('tsCount').textContent,
+      title:$test('tsCount').title,
+      hasHidden:$test('tsCount').classList.contains('has-hidden')
+    })`));
+    console.log('       folded-only search:', JSON.stringify(folded));
+    assert.equal(folded.marks,0,'text inside a closed card must not be marked: '+JSON.stringify(folded));
+    assert.equal(folded.count,'0/0','the counter must not include invisible hits: '+JSON.stringify(folded));
+    assert.equal(folded.hasHidden,true,'the hidden count must be surfaced instead of dropped silently');
+    assert.match(folded.title,/2 处/,'the tooltip says how many are folded away: '+JSON.stringify(folded));
+
+    // Opening the card makes them real hits.
+    await evaluate("document.getElementById('foldProbe').open=true");
+    await sleep(150);
+    await evaluate(`(() => { const i=$test('tsInput'); i.value='xyzzy';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await sleep(300);
+    assert.equal(await evaluate("document.querySelectorAll('#log mark.ts-hit').length"),2,
+      'once the card is open its text is searchable');
+
+    await evaluate("$test('tsInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await sleep(150);
+    await evaluate("document.getElementById('foldProbe').remove()");
+  });
   await check('manual context-window override survives history loading',async()=>{
     await evaluate("$test('contextWindow').value='2000';$test('contextWindow').dispatchEvent(new Event('change'));document.querySelectorAll('.sess')[1].click()");
     await waitUI("$test('status').textContent === '已切换会话'");
