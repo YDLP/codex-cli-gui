@@ -570,6 +570,31 @@ async function main(){
     assert.ok(await evaluate('__test.stops.at(-1).runId'));
     assert.equal((await (await fetch(origin+'/api/health')).json()).running,0);
   });
+  await check('the spinner stops when the answer ends, not when the process exits',async()=>{
+    // Reported: "回复的吐完了转圈起码还转了10s左右". The reply was complete; the
+    // CLI process was still doing post-turn work, and the spinner waited for that.
+    await evaluate("$test('btnNew').click();__test.failRun=false;__test.failCheck=false");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='SLOW_EXIT';$test('btnSend').click()");
+    // The reply text must be on screen before the process is gone.
+    await waitUI("/答案已经写完了/.test($test('log').textContent)",10000);
+    await sleep(250);
+    const mid=JSON.parse(await evaluate(`JSON.stringify({
+      spinner: document.querySelectorAll('#sessionList .sess-state.running').length,
+      badge: $test('busyBadge').textContent,
+      sendDisabled: $test('btnSend').disabled,
+      status: $test('status').textContent
+    })`));
+    console.log('       while the process lingers:', JSON.stringify(mid));
+    assert.equal(mid.spinner,0,'the spinner must stop once the answer is complete: '+JSON.stringify(mid));
+    assert.equal(mid.badge,'收尾中…','the tail is labelled as teardown, not as running: '+JSON.stringify(mid));
+    assert.equal(mid.sendDisabled,true,
+      'the next turn must still wait: the session holds a writer lock until the process exits');
+
+    // ...and once the process really exits, everything is released.
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",15000);
+    assert.equal(await evaluate("$test('busyBadge').textContent"),'空闲');
+  });
   await check('a session keeps running while you work in another',async()=>{
     // Asked for as "左边会话窗口独立工作" plus a spinner / green dot / red dot.
     await evaluate("__test.failRun=false;__test.failCheck=false");

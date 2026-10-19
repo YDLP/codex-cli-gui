@@ -96,6 +96,23 @@ test('cross-origin, non-JSON, and forged Host requests are denied',async()=>{
 test('oversize settings body returns an HTTP error, not a connection reset',async()=>{
   assert.equal((await post('/api/settings',{padding:'x'.repeat(2*1024*1024)})).status,413);
 });
+test('the stream announces the finished answer before the process exits',async()=>{
+  // `turn.completed` is withheld until the process exits so it can carry final
+  // usage and file diffs. The UI still has to learn the ANSWER is done earlier:
+  // the CLI spends seconds afterwards flushing the rollout. Reported as "回复吐完
+  // 了转圈还转了10s".
+  const run=await openRun('hello');
+  const text=await run.done;
+  const doneAt=text.indexOf('event: answer_done');
+  const exitAt=text.indexOf('event: exit');
+  const completedAt=text.indexOf('turn.completed');
+  assert.ok(doneAt>0,'the stream must carry an answer_done event');
+  assert.ok(exitAt>doneAt,'answer_done must arrive BEFORE the exit event');
+  // The enriched turn.completed still arrives (with usage and file diffs), after
+  // the early signal and before exit -- that order is what keeps the meter working.
+  assert.ok(completedAt>doneAt,'the enriched completed turn comes after answer_done');
+  assert.ok(completedAt<exitAt,'and before the process exit');
+});
 test('attachments accept empty files and preserve same-name files across turns',()=>{
   const input=validateAttachments([{name:'same.txt',dataBase64:Buffer.from('one').toString('base64')},{name:'same.txt',dataBase64:Buffer.from('two').toString('base64')},{name:'empty',dataBase64:''}]);
   const first=stageAttachments(temp,input),second=stageAttachments(temp,input);

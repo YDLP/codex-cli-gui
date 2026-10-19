@@ -2621,7 +2621,12 @@
     ['btnNew','btnClear','btnAttach','fileInput','btnPick','cwd','model','reasoningEffort','sandbox','webSearch','proxy','contextWindow'].forEach((id) => { $(id).disabled = v; });
     $('btnStop').classList.toggle('hidden', !v);
     const b = $('busyBadge');
-    b.textContent = v ? '运行中' : '空闲';
+    // `codex exec` keeps the process alive for a while AFTER the answer is done
+    // (rollout flush, plugin-catalog requests). Calling that "运行中" made the app
+    // look busy long after the reply had arrived, so the tail is labelled for what
+    // it is -- and the sidebar spinner stops at turn.completed.
+    const finishing = v && !!(activeRun() && activeRun().answering === false);
+    b.textContent = v ? (finishing ? '收尾中…' : '运行中') : '空闲';
     b.classList.toggle('on', !v);
   }
   const status = (t) => { $('status').textContent = t; };
@@ -2936,6 +2941,8 @@
       failed: false,
       detached: false,
       stopRequested: false,
+      /** flips to false at turn.completed: the answer is done, the process is not */
+      answering: true,
       startedAt: Date.now(),
     };
     runs.push(run);
@@ -3010,6 +3017,17 @@
               run.detached = true;
               if (started) bindRun(started);
               if (failedEvent) run.failed = true;
+            }
+          }
+          else if (name === 'answer_done'){
+            // The bridge sends this the moment the answer is complete, before the
+            // CLI has finished its post-turn housekeeping. Only the teardown is
+            // left, so the spinner stops here and the badge says so.
+            if (run.answering){
+              run.answering = false;
+              sessionStatus.set(run.sessionKey, 'done');
+              renderSessions();
+              if (visible() && busy) setBusy(true);
             }
           }
           else if (name === 'meta'){

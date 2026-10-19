@@ -46,8 +46,15 @@ if (args[0] === 'app-server') {
       emit({ type:'turn.completed', usage:{input_tokens:1000,output_tokens:50,reasoning_output_tokens:0,cached_input_tokens:0} });
       return;
     }
-    // Prompts starting with BIG report a huge context, so a following ordinary
-    // turn looks like a large drop -- the only signal compaction inference has.
+    // The answer is complete, but the process lingers -- exactly what real
+    // `codex exec` does (rollout flush, plugin-catalog requests). Measured by the
+    // user as ~10s of spinner after the reply had visibly finished.
+    if (prompt.startsWith('SLOW_EXIT')) {
+      emit({ type:'item.completed', item:{ type:'agent_message', text:'答案已经写完了。' } });
+      emit({ type:'turn.completed', usage:{input_tokens:900,output_tokens:20,reasoning_output_tokens:0,cached_input_tokens:0} });
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return;
+    }
     const big = prompt.startsWith('BIG');
     // THREE deliberately LONG commands, so two things can be checked for real:
     //   1. a long command left in <summary> kept the card wide open when folded;

@@ -426,7 +426,16 @@ function startRun(opts, res) {
       try {
         const event = JSON.parse(t);
         if (event.type === 'thread.started') run.threadId = event.thread_id;
-        if (event.type === 'turn.completed') { completedTurn = event; return; }
+        if (event.type === 'turn.completed') {
+          // Held back until the process exits, because only then is the usage
+          // final and the file diffs available (see finish()). But the user
+          // needs to know the ANSWER is done NOW: `codex exec` then spends
+          // seconds flushing the rollout and poking plugin catalogs, and the UI
+          // used to spin through all of it (reported as ~10s of extra spinner).
+          completedTurn = event;
+          sse('answer_done', { at: Date.now() });
+          return;
+        }
         sse('codex', event);
         return;
       } catch { /* fall through to text */ }
