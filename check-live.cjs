@@ -65,6 +65,9 @@ const read = (p) => new Promise((res, rej) => {
     ['each occurrence gets a mark', /className = 'ts-hit'/],
     ['next/previous hops between hits', /function tsGoto/],
     ['clearing restores the transcript exactly', /function tsClearMarks/],
+    // Theme is a header selector; the cycling button was removed.
+    ['theme is a selector in the header', /id="theme" class="theme-pick"/],
+    ['changing it applies and persists', /applyTheme\(\$\('theme'\)\.value\); persist\(\);/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

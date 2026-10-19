@@ -185,6 +185,33 @@ async function main(){
   });
   await evaluate("$test('btnRefreshSessions').click()");
   await waitUI("document.querySelectorAll('.sess').length === 2");
+  await check('theme is a header selector, not a hidden cycle',async()=>{
+    // Requested: move the theme control out of the settings panel and drop the 🌗
+    // button -- it cycled through an order you had to remember.
+    assert.equal(await evaluate("!!document.querySelector('header #theme')"),true,
+      'the theme select belongs in the header');
+    assert.equal(await evaluate("document.getElementById('btnTheme')"),null,
+      'the cycling button must be gone');
+    assert.equal(await evaluate("[...document.querySelectorAll('#aside h2')].some(function(h){return h.textContent==='界面';})"),false,
+      'the settings panel no longer holds a 界面 section');
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#theme option')).map(function(o){return o.value;})"),
+      ['dark','light','system'],'all three choices stay explicit');
+
+    // Changing it applies immediately and is persisted, not just stored in the DOM.
+    await evaluate(`(() => { const s=document.getElementById('theme'); s.value='light';
+      s.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+    await sleep(300);
+    assert.equal(await evaluate("document.documentElement.getAttribute('data-theme')"),'light',
+      'the light theme must be applied to the document');
+    const saved=await (await fetch(origin+'/api/settings')).json();
+    assert.equal(saved.theme,'light','the choice must be saved');
+
+    await evaluate(`(() => { const s=document.getElementById('theme'); s.value='dark';
+      s.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+    await sleep(300);
+    assert.equal(await evaluate("document.documentElement.getAttribute('data-theme')"),'dark',
+      'switching back must work too');
+  });
   await check('an empty session reply never wipes the sidebar',async()=>{
     // The session reader can legitimately come back empty for a moment
     // (app-server restarting). Replacing the list then reads as "all your

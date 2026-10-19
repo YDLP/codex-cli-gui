@@ -35,6 +35,12 @@
     background:var(--panel); border-bottom:1px solid var(--line); flex:0 0 auto;
   }
   header h1{font-size:15px; margin:0; font-weight:600; letter-spacing:.3px}
+  /* Theme selector in the header: compact, so it reads as a view control rather
+     than a form field. */
+  .theme-pick{
+    padding:3px 7px; font-size:12px; border-radius:6px;
+    max-width:110px;
+  }
   .badge{
     font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line);
     color:var(--dim); background:var(--panel2); white-space:nowrap;
@@ -552,7 +558,14 @@
   <div class="spacer"></div>
   <button id="btnSessions" title="显示/隐藏会话列表">会话</button>
   <button id="btnFind" class="icon" title="在本次会话中搜索（Ctrl+F）">🔍</button>
-  <button id="btnTheme" class="icon" title="切换深色/浅色">🌗</button>
+  <!-- Theme lives here, not in the settings panel: it is a view control you reach
+       for often, and the old 🌗 button cycled through a hidden order. One select,
+       three explicit choices. -->
+  <select id="theme" class="theme-pick" title="主题">
+    <option value="dark">深色</option>
+    <option value="light">浅色</option>
+    <option value="system">跟随系统</option>
+  </select>
   <button id="btnNew" title="开始新会话（丢弃当前上下文）">新会话</button>
   <button id="btnClear" title="只清空显示，不动会话上下文">清屏</button>
   <button id="btnSettings" title="显示/隐藏设置">设置</button>
@@ -648,18 +661,6 @@
           <code>codex debug models</code> 的 <code>context_window × effective_context_window_percent</code>）。
           当前：<span id="ctxCatalogInfo">—</span><br>
           只有想手工校准时才填数字。</div>
-      </div>
-    </div>
-
-    <div class="sect">
-      <h2>界面</h2>
-      <div class="field">
-        <label for="theme">主题</label>
-        <select id="theme">
-          <option value="dark">深色</option>
-          <option value="light">浅色</option>
-          <option value="system">跟随系统</option>
-        </select>
       </div>
     </div>
 
@@ -3532,11 +3533,6 @@
     document.body.style.outline = '';
     document.body.style.outlineOffset = '';
   });
-  $('btnTheme').onclick = () => {
-    const order = ['dark','light','system'];
-    const next = order[(order.indexOf($('theme').value) + 1) % order.length];
-    $('theme').value = next; applyTheme(next); persist();
-  };
   $('btnPick').onclick = async () => {
     const picked = await pickFolderModal();
     if (picked){ $('cwd').value = picked; persist(); }
