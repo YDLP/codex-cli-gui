@@ -56,6 +56,18 @@
     color:var(--dim); background:var(--panel2); white-space:nowrap;
   }
   .badge.on{color:var(--ok); border-color:var(--ok)}
+  /* The busy badge has three states, so all three get a colour: green when it is
+     ready to send, blue while a turn runs, amber for the teardown tail. Colouring
+     only "空闲" left the other two looking disabled rather than active. */
+  #busyBadge[data-state="busy"]{
+    color:var(--accent); border-color:var(--accent);
+    background:color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  #busyBadge[data-state="finishing"]{
+    color:var(--warn); border-color:var(--warn);
+    background:color-mix(in srgb, var(--warn) 12%, transparent);
+  }
+  #busyBadge[data-state="idle"]{color:var(--ok); border-color:var(--ok)}
   .spacer{flex:1}
   button{
     font:inherit; color:var(--fg); background:var(--panel2); border:1px solid var(--line);
@@ -2627,6 +2639,7 @@
     // it is -- and the sidebar spinner stops at turn.completed.
     const finishing = v && !!(activeRun() && activeRun().answering === false);
     b.textContent = v ? (finishing ? '收尾中…' : '运行中') : '空闲';
+    b.dataset.state = v ? (finishing ? 'finishing' : 'busy') : 'idle';
     b.classList.toggle('on', !v);
   }
   const status = (t) => { $('status').textContent = t; };

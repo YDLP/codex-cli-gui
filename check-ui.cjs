@@ -590,10 +590,19 @@ async function main(){
     assert.equal(mid.badge,'收尾中…','the tail is labelled as teardown, not as running: '+JSON.stringify(mid));
     assert.equal(mid.sendDisabled,true,
       'the next turn must still wait: the session holds a writer lock until the process exits');
+    // All three badge states carry a colour; colouring only "空闲" looked broken.
+    const tailState=await evaluate("$test('busyBadge').dataset.state");
+    const tailColor=await evaluate("getComputedStyle($test('busyBadge')).color");
+    console.log('       finishing badge:', tailState, tailColor);
+    assert.equal(tailState,'finishing','the badge exposes its state for styling: '+tailState);
+    assert.notEqual(tailColor,'rgb(139, 148, 158)','the finishing badge must not stay the dim default: '+tailColor);
 
     // ...and once the process really exits, everything is released.
     await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",15000);
     assert.equal(await evaluate("$test('busyBadge').textContent"),'空闲');
+    assert.equal(await evaluate("$test('busyBadge').dataset.state"),'idle');
+    assert.equal(await evaluate("getComputedStyle($test('busyBadge')).color"),'rgb(63, 185, 80)',
+      'idle keeps its green, so "ready to send" still reads at a glance');
   });
   await check('a session keeps running while you work in another',async()=>{
     // Asked for as "左边会话窗口独立工作" plus a spinner / green dot / red dot.

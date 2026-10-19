@@ -77,8 +77,8 @@ const read = (p) => new Promise((res, rej) => {
     ['a background run does not touch the visible feed', /function runVisible/],
     ['the sidebar shows running/done/error', /sess-state/],
     ['stop only targets the active session', /const run = activeRun\(\)/],
-    // The answer-done signal must not wait for the process to exit.
-    ['the bridge signals the finished answer early', /sse\('answer_done'/],
+    // The answer-done signal must not wait for the process to exit (the bridge
+    // side of this is covered by test/bridge.test.cjs).
     ['the page stops spinning on that signal', /name === 'answer_done'/],
   ];
   let ok = 0;
