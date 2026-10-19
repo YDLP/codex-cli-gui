@@ -72,6 +72,11 @@ const read = (p) => new Promise((res, rej) => {
     ['animations are CSS-only', /@keyframes rowIn/],
     ['reduced-motion is respected', /prefers-reduced-motion/],
     ['the theme fade is a temporary class', /body\.theming/],
+    // Sessions work independently; the sidebar says which is doing what.
+    ['runs are tracked per session', /const runs = \[\]/],
+    ['a background run does not touch the visible feed', /function runVisible/],
+    ['the sidebar shows running/done/error', /sess-state/],
+    ['stop only targets the active session', /const run = activeRun\(\)/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

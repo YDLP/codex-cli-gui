@@ -549,6 +549,20 @@
     border:1px solid var(--line); border-radius:6px; font:inherit; margin-bottom:12px}
   .modal-actions{display:flex; gap:8px; justify-content:flex-end}
 
+  /* ---- session run indicator: spinner while running, green/red when done ---- */
+  @keyframes sessSpin{to{transform:rotate(360deg)}}
+  .sess-state{
+    display:inline-block; width:8px; height:8px; border-radius:50%;
+    margin-right:6px; vertical-align:baseline;
+  }
+  .sess-state.running{
+    width:9px; height:9px; background:transparent;
+    border:2px solid var(--line); border-top-color:var(--accent);
+    animation:sessSpin .7s linear infinite;
+  }
+  .sess-state.done{background:var(--ok)}
+  .sess-state.error{background:var(--err)}
+
   /* ======================================================================
      Motion & polish
      Every effect here is decoration: removing the whole block leaves a fully
@@ -875,13 +889,22 @@
   let catalog = { models: [], fallbackEfforts: [] };
   let threadId = '';
   let busy = false;
+  /**
+   * Runs in flight, one entry per session.
+   *
+   * A run belongs to the session that started it (`sessionKey`), NOT to the tab.
+   * Switching sessions no longer kills or blocks a run: it keeps streaming, its
+   * DOM writes are skipped while you are looking elsewhere, and its sidebar row
+   * shows the outcome. `sessionKey` is 'pending' until the CLI reports the id.
+   */
+  const runs = [];               // [{ sessionKey, controller, runId, status, failed, ... }]
+  /** sessionId -> 'running' | 'done' | 'error'; drives the sidebar indicator. */
+  const sessionStatus = new Map();
   let currentAgent = null;
   let currentThinking = null;
   let ready = false;
   let historyLoading = false;
   let historyRequest = 0;
-  let activeController = null;
-  let activeRunId = '';
   let stopRequested = false;
   let runFailed = false;
   let pendingFiles = 0;
@@ -2579,6 +2602,19 @@
     }
   }
   // ---------------------------------------------------------------- helpers
+
+  /** The run that belongs to the session currently on screen, if any. */
+  function activeRun(){
+    return runs.find((r) => r.status === 'running' &&
+      (threadId ? r.sessionKey === threadId : r.sessionKey === 'pending')) || null;
+  }
+  /** True when THIS run's output belongs on screen right now. */
+  function runVisible(run){
+    if (!run) return false;
+    return threadId ? run.sessionKey === threadId : run.sessionKey === 'pending';
+  }
+  function statusFor(id){ return sessionStatus.get(id) || ''; }
+
   function setBusy(v){
     busy = v;
     updateSendState();
@@ -2889,31 +2925,49 @@
       resumeThreadId: threadId,
       attachments: attachments.map((a) => ({ name: a.name, dataBase64: a.dataBase64 })),
     };
-    activeController = new AbortController();
-    activeRunId = '';
+    // The run belongs to THIS session. If you switch away it keeps going; its
+    // output is simply not written anywhere until you come back (the turn is on
+    // disk by then, so switching back replays it).
+    const run = {
+      sessionKey: threadId || 'pending',
+      controller: new AbortController(),
+      runId: '',
+      status: 'running',
+      failed: false,
+      detached: false,
+      stopRequested: false,
+      startedAt: Date.now(),
+    };
+    runs.push(run);
+    if (run.sessionKey !== 'pending') sessionStatus.set(run.sessionKey, 'running');
+    renderSessions();          // the row shows a spinner straight away
     stopRequested = false;
     runFailed = false;
     setBusy(true);
     status('检查工作目录…');
+    const visible = () => runVisible(run);
     let accepted = false;
     let sawExit = false;
+    let exitOk = false;
     try {
       const chk = await requestJSON('/api/checkdir', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cwd}), signal: activeController.signal,
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cwd}), signal: run.controller.signal,
       });
       if (!chk.ok) throw new Error('工作目录无效：' + cwd + (chk.note ? '（' + chk.note + '）' : ''));
       await persist();
-      if (activeController.signal.aborted) throw new DOMException('已停止', 'AbortError');
+      if (run.controller.signal.aborted) throw new DOMException('已停止', 'AbortError');
       // New turn: a fresh reply bubble becomes the bottom anchor. Every tool card
       // this turn is inserted above it, so the reply never gets pushed off screen.
-      resetAgentRow();
-      ensureAgentRow();
-      stopToolGroup();          // this turn gets its own grouped command card
-      stopFileGroup();          // and its own file group
-      showThinking(true);
+      if (visible()){
+        resetAgentRow();
+        ensureAgentRow();
+        stopToolGroup();          // this turn gets its own grouped command card
+        stopFileGroup();          // and its own file group
+        showThinking(true);
+      }
       status('启动 Codex…');
       const resp = await fetch('/api/run', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload), signal: activeController.signal,
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload), signal: run.controller.signal,
       });
       if (!resp.ok){
         const error = await resp.json().catch(() => ({}));
@@ -2923,6 +2977,17 @@
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = '';
+
+      /** A run started on a brand-new session learns its id here. */
+      const bindRun = (id) => {
+        if (!id || run.sessionKey === id) return;
+        if (run.sessionKey === 'pending'){
+          run.sessionKey = id;
+          sessionStatus.set(id, 'running');
+          renderSessions();
+        }
+      };
+
       const consume = (flush = false) => {
         const frames = buf.split(/\r?\n\r?\n/);
         buf = flush ? '' : (frames.pop() ?? '');
@@ -2933,10 +2998,24 @@
           if (!evLine || !dataText) continue;
           const name = evLine.slice(6).trim();
           const data = JSON.parse(dataText);
-          if (name === 'codex') handleCodex(data);
+          if (name === 'codex'){
+            const started = data && data.type === 'thread.started' ? String(data.thread_id || '') : '';
+            const failedEvent = data && data.type === 'turn.failed';
+            if (visible()){
+              handleCodex(data);          // this also sets threadId
+              if (failedEvent) run.failed = true;   // per-run, not just the global flag
+              if (started) bindRun(started);
+            } else {
+              // Background: no DOM, but keep the id and the failure flag.
+              run.detached = true;
+              if (started) bindRun(started);
+              if (failedEvent) run.failed = true;
+            }
+          }
           else if (name === 'meta'){
             accepted = true;
-            activeRunId = data.runId;
+            run.runId = data.runId;
+            if (!visible()){ run.detached = true; continue; }
             // Echo what was actually staged, so this turn's message shows the
             // same thumbnails a reloaded session will show. Keep the local bytes
             // as a fallback: if the staged path cannot be resolved the picture
@@ -2967,17 +3046,21 @@
             markCtxStale(true);
             status('运行中 · ' + (data.cwd || ''));
           }
-          else if (name === 'text'){ showThinking(false); addMeta(data.line); }
-          else if (name === 'stderr') addMeta('CLI 日志：\n' + data.text);
-          else if (name === 'fatal'){ runFailed = true; showThinking(false); addError(data.message); }
+          else if (name === 'text'){ if (visible()){ showThinking(false); addMeta(data.line); } }
+          else if (name === 'stderr'){ if (visible()) addMeta('CLI 日志：\n' + data.text); }
+          else if (name === 'fatal'){ run.failed = true; if (visible()){ runFailed = true; showThinking(false); addError(data.message); } }
           else if (name === 'exit'){
             sawExit = true;
-            showThinking(false);
-            // The turn is over: fold the tool cards so the transcript settles
-            // into a readable summary instead of a wall of open output.
-            collapseToolCards();
-            status(data.stopped || stopRequested ? '已停止' : (data.code === 0 && !runFailed ? '完成' : '运行失败（退出码 ' + data.code + '）'));
-            if (data.code === 0 && threadId) loadSessions();
+            const stopped = data.stopped || run.stopRequested;
+            exitOk = data.code === 0 && !run.failed && !runFailed && !stopped;
+            if (visible()){
+              showThinking(false);
+              // The turn is over: fold the tool cards so the transcript settles
+              // into a readable summary instead of a wall of open output.
+              collapseToolCards();
+              status(stopped ? '已停止' : (exitOk ? '完成' : '运行失败（退出码 ' + data.code + '）'));
+              if (exitOk && threadId) loadSessions();
+            }
           }
         }
       };
@@ -2989,18 +3072,38 @@
       }
       if (!sawExit) throw new Error(runFailed ? 'Codex 未能启动' : '连接意外中断，未收到完成状态');
     } catch (e){
-      if (stopRequested || e.name === 'AbortError') status('已停止');
-      else { addError(e.message); status(accepted ? '连接中断或运行失败' : '发送失败，输入和附件已保留'); }
+      run.failed = true;
+      if (run.stopRequested || e.name === 'AbortError'){
+        if (visible()) status('已停止');
+      } else if (visible()){
+        addError(e.message);
+        status(accepted ? '连接中断或运行失败' : '发送失败，输入和附件已保留');
+      }
     } finally {
-      activeController?.abort();
-      activeController = null; activeRunId = '';
-      // Drop an empty turn card FIRST: showThinking(false) below removes the
-      // "working" row, which would make the card look non-empty to a later check.
-      dropAgentRowIfEmpty();
-      showThinking(false); setBusy(false); renderRecent();
-      // Also fold on the failure/abort paths, so a crashed run does not leave
-      // every card hanging open.
-      collapseToolCards();
+      run.controller.abort();
+      run.status = run.stopRequested ? 'done' : (run.failed || !sawExit ? 'error' : (exitOk ? 'done' : 'error'));
+      if (run.status === 'done' && !run.stopRequested) sessionStatus.set(run.sessionKey, 'done');
+      else if (run.status === 'error') sessionStatus.set(run.sessionKey, 'error');
+      else sessionStatus.set(run.sessionKey, 'done');
+      const wasVisible = visible();
+      runs.splice(runs.indexOf(run), 1);
+      if (wasVisible){
+        // Drop an empty turn card FIRST: showThinking(false) below removes the
+        // "working" row, which would make the card look non-empty to a later check.
+        dropAgentRowIfEmpty();
+        showThinking(false);
+        // Also fold on the failure/abort paths, so a crashed run does not leave
+        // every card hanging open.
+        collapseToolCards();
+        status($('status').textContent);   // keep the exit status already shown
+      }
+      // A session that finished in the background is now on disk; if the user is
+      // looking at it, reload so the completed turn appears instead of a half one.
+      if (run.detached && threadId === run.sessionKey) refreshHistoryIfIdle();
+      setBusy(!!activeRun());
+      renderRecent();
+      renderSessions();
+      if (run.sessionKey && threadId !== run.sessionKey) loadSessions();
     }
   }
 
@@ -3158,7 +3261,19 @@
       el.appendChild(t);
       const m = document.createElement('div');
       m.className = 'sess-meta';
-      m.textContent = fmtTime(s.updatedAt || s.createdAt) + (s.model ? ' · ' + s.model : '');
+      // Run indicator: a spinner while this session is working, then a green dot
+      // for success or a red one for failure. It is per session, so a background
+      // run is visible without opening it.
+      const st = statusFor(s.id);
+      if (st){
+        const dot = document.createElement('span');
+        dot.className = 'sess-state ' + st;
+        dot.dataset.state = st;
+        dot.title = st === 'running' ? '正在运行'
+          : (st === 'done' ? '上次运行成功' : '上次运行失败');
+        m.appendChild(dot);
+      }
+      m.appendChild(document.createTextNode(fmtTime(s.updatedAt || s.createdAt) + (s.model ? ' · ' + s.model : '')));
       el.appendChild(m);
 
       // Why this session matched: the sentence around the keyword.
@@ -3235,7 +3350,8 @@
    * also returns Codex's own token accounting for the last turn.
    */
   async function switchSession(s){
-    if (busy) { status('请先停止当前任务，再切换会话'); return; }
+    // Switching no longer requires stopping: a run keeps going in the background
+    // and its session row keeps showing that it is running.
     const requestId = ++historyRequest;
     historyLoading = true; updateSendState();
     if (sessionsDrawerMedia.matches) $('sessionsPane').classList.add('hidden');
@@ -3323,6 +3439,17 @@
       });
     }
     status('已切换会话');
+    // The composer reflects THIS session's state, not whatever was running in the
+    // one we just left.
+    setBusy(!!activeRun());
+  }
+
+  /** Reload the visible transcript if this session has nothing running. */
+  async function refreshHistoryIfIdle(){
+    if (historyLoading) return;
+    const current = sessions.find((s) => s.id === threadId);
+    if (!current) return;
+    await switchSession(current);
   }
 
   // --------------------------------------------------------- attachments
@@ -3589,12 +3716,17 @@
 
   $('btnSend').onclick = send;
   $('btnStop').onclick = async () => {
-    if (!busy) return;
-    stopRequested = true; status('正在停止…');
-    if (!activeRunId) { activeController?.abort(); return; }
+    // Stop only the run that belongs to the session on screen; other sessions
+    // keep working.
+    const run = activeRun();
+    if (!run) return;
+    run.stopRequested = true;
+    stopRequested = true;
+    status('正在停止…');
+    if (!run.runId) { run.controller.abort(); return; }
     try {
-      await requestJSON('/api/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({runId:activeRunId}) });
-    } catch (error) { activeController?.abort(); addError('停止请求失败：' + error.message); }
+      await requestJSON('/api/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({runId:run.runId}) });
+    } catch (error) { run.controller.abort(); addError('停止请求失败：' + error.message); }
   };
   $('btnClear').onclick = () => { log.innerHTML = ''; resetTurnView(); renderRecent(); rebuildJumpRail(); hideJumpTip(); };
   $('btnNew').onclick = () => {

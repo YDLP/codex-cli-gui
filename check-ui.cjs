@@ -570,6 +570,69 @@ async function main(){
     assert.ok(await evaluate('__test.stops.at(-1).runId'));
     assert.equal((await (await fetch(origin+'/api/health')).json()).running,0);
   });
+  await check('a session keeps running while you work in another',async()=>{
+    // Asked for as "左边会话窗口独立工作" plus a spinner / green dot / red dot.
+    await evaluate("__test.failRun=false;__test.failCheck=false");
+    // A REAL second session first: an id that exists only in the stub has no
+    // rollout on disk, and resuming it is correctly refused ("无法核实此会话的原有权限").
+    await evaluate("$test('btnNew').click()");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='second session hello';$test('btnSend').click()");
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",15000);
+    const otherId=await evaluate("$test('threadId').value");
+    assert.ok(otherId,'the second session has an id');
+
+    // Now a long turn in a THIRD session, which we leave running in the background.
+    await evaluate("$test('btnNew').click()");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='WAIT parallel';$test('btnSend').click()");
+    await waitUI("$test('threadId').value !== '' && !$test('btnStop').classList.contains('hidden')",8000);
+    const runId=await evaluate("$test('threadId').value");
+    assert.ok(runId !== otherId,'the running session is a different one');
+
+    // Put both in the sidebar so the indicators can be checked.
+    await evaluate(`__test.sessions=[
+      {id:${JSON.stringify(runId)},title:'Running one',cwd:${JSON.stringify(temp)}},
+      {id:${JSON.stringify(otherId)},title:'Finished one',cwd:${JSON.stringify(temp)}},
+      ...(__test.sessions||[])]`);
+    await evaluate("$test('btnRefreshSessions').click()");
+    await waitUI("document.querySelectorAll('#sessionList .sess-state.running').length >= 1",8000);
+    console.log('       spinners in sidebar: ' + await evaluate("document.querySelectorAll('#sessionList .sess-state.running').length"));
+
+    // Switching away must NOT be blocked any more.
+    await evaluate("document.querySelectorAll('#sessionList .sess')[1].click()");
+    await waitUI("$test('status').textContent === '已切换会话'",8000);
+    assert.equal(await evaluate("$test('btnSend').disabled"),false,
+      'the other session can be used while the first one runs');
+    assert.equal((await (await fetch(origin+'/api/health')).json()).running,1,
+      'the background turn must still be running');
+
+    // A failing turn in the second session turns ITS dot red, not the first's.
+    await evaluate("$test('prompt').value='FAIL_EVENT';$test('btnSend').click()");
+    await waitUI("!$test('btnSend').disabled && $test('status').textContent.includes('运行失败')",10000);
+    await sleep(300);
+    const dots=JSON.parse(await evaluate(`JSON.stringify({
+      running:document.querySelectorAll('#sessionList .sess-state.running').length,
+      error:document.querySelectorAll('#sessionList .sess-state.error').length,
+      done:document.querySelectorAll('#sessionList .sess-state.done').length
+    })`));
+    console.log('       dots after the failure:', JSON.stringify(dots));
+    assert.equal(dots.error,1,'the failed session gets a red dot: '+JSON.stringify(dots));
+    assert.equal(dots.running,1,'the background session is still spinning: '+JSON.stringify(dots));
+
+    // Back to the first session: stopping it there must stop it there.
+    await evaluate("document.querySelectorAll('#sessionList .sess')[0].click()");
+    await waitUI("$test('status').textContent === '已切换会话'",8000);
+    assert.equal(await evaluate("$test('btnStop').classList.contains('hidden')"),false,
+      'the running session shows its own stop button');
+    await evaluate("$test('btnStop').click()");
+    await waitUI("$test('status').textContent === '已停止'",10000);
+    await sleep(300);
+    assert.equal((await (await fetch(origin+'/api/health')).json()).running,0,'nothing left running');
+    assert.equal(await evaluate("document.querySelectorAll('#sessionList .sess-state.running').length"),0,
+      'no spinner is left behind');
+    await evaluate("__test.sessions=(__test.sessions||[]).filter(function(s){return s.title!=='Running one';})");
+  });
   await check('directory network failure is caught before input is consumed',async()=>{
     await evaluate("__test.failCheck=true;$test('prompt').value='keep this';$test('btnSend').click()");
     await waitUI("$test('status').textContent.includes('发送失败') && !$test('btnSend').disabled");

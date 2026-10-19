@@ -24,6 +24,7 @@ better. This exists for the machines that fall through the cracks.
 
 - **Chat with the Codex CLI** — Enter sends, Shift+Enter newlines, IME-safe
 - **Session list** — continue, rename, delete past sessions, history replayed from disk
+- **Sessions run in parallel** — switching away does not stop a turn; the sidebar marks each one with a spinner / green dot / red dot for running / last-succeeded / last-failed
 - **Session search** — filters titles as you type and searches each conversation's text, showing the matching context with the keyword highlighted
 - **In-session search** — Ctrl+F finds a keyword in the open conversation, marks every hit, and Enter / Shift+Enter or `‹ ›` jump between them
 - **Light motion** — cards and replies fade in, controls lift on hover, disclosure arrows rotate, and the theme change fades over the surfaces. All of it is CSS and switches off when the OS asks for reduced motion
