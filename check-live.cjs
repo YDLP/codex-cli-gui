@@ -68,6 +68,10 @@ const read = (p) => new Promise((res, rej) => {
     // Theme is a header selector; the cycling button was removed.
     ['theme is a selector in the header', /id="theme" class="theme-pick"/],
     ['changing it applies and persists', /applyTheme\(\$\('theme'\)\.value\); persist\(\);/],
+    // Polish must stay decoration: no effect may be required for the UI to work.
+    ['animations are CSS-only', /@keyframes rowIn/],
+    ['reduced-motion is respected', /prefers-reduced-motion/],
+    ['the theme fade is a temporary class', /body\.theming/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

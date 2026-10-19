@@ -81,6 +81,7 @@
     border:1px solid var(--line); border-radius:6px; font:inherit;
   }
   .field select{cursor:pointer}
+  .field input[type=text]:hover, .field select:hover{border-color:color-mix(in srgb, var(--accent) 45%, var(--line))}
   .field input:focus, .field select:focus{outline:none; border-color:var(--accent)}
   .hint{font-size:11px; color:var(--dim); margin-top:5px; line-height:1.5}
   .row-inline{display:flex; gap:8px}
@@ -235,6 +236,9 @@
   .row.turn{
     border:1px solid var(--line); border-radius:10px;
     background:var(--panel2); padding:10px 12px; gap:8px;
+    /* A hairline of depth, so a reply reads as a card above the feed rather than
+       another flat band. */
+    box-shadow:0 1px 2px rgba(0,0,0,.10);
   }
   .turn-head{
     font-size:11px; font-weight:700; letter-spacing:.6px;
@@ -258,11 +262,12 @@
     display:flex; align-items:center; gap:8px; user-select:none;
   }
   details.cmd-group > summary:hover, details.fch-group > summary:hover{background:var(--panel2)}
+  /* The arrow ROTATES instead of swapping glyphs: the swap could not be animated. */
   details.cmd-group > summary::after, details.fch-group > summary::after{
     content:'▸'; margin-left:auto; color:var(--dim); font-size:11px;
-    transition:transform .12s ease;
+    transition:transform .18s cubic-bezier(.22,.61,.36,1);
   }
-  details.cmd-group[open] > summary::after, details.fch-group[open] > summary::after{content:'▾'}
+  details.cmd-group[open] > summary::after, details.fch-group[open] > summary::after{transform:rotate(90deg)}
   .grp-count{color:var(--fg); font-weight:600}
   .grp-body{padding:8px; display:flex; flex-direction:column; gap:6px; background:var(--panel2)}
   /* Nested command/file rows read as a list, not as separate cards. */
@@ -351,9 +356,9 @@
   /* An explicit affordance, so it is obvious the card expands. */
   details.cmd summary::after, details.filechg summary::after{
     content:'▸'; margin-left:auto; color:var(--dim); font-size:11px;
-    transition:transform .12s ease;
+    transition:transform .18s cubic-bezier(.22,.61,.36,1);
   }
-  details.cmd[open] summary::after, details.filechg[open] summary::after{content:'▾'}
+  details.cmd[open] summary::after, details.filechg[open] summary::after{transform:rotate(90deg)}
   /* A short echo of the command while folded; the full text lives in the body. */
   details.cmd summary .cmd-peek, details.filechg summary .cmd-peek{
     color:var(--fg); font:12px/1.4 "Cascadia Mono",Consolas,monospace;
@@ -543,6 +548,121 @@
   .modal input{width:100%; padding:8px 10px; background:var(--code); color:var(--fg);
     border:1px solid var(--line); border-radius:6px; font:inherit; margin-bottom:12px}
   .modal-actions{display:flex; gap:8px; justify-content:flex-end}
+
+  /* ======================================================================
+     Motion & polish
+     Every effect here is decoration: removing the whole block leaves a fully
+     working UI. Durations stay short (<= .3s) because this is a work tool that
+     is read all day, and `prefers-reduced-motion` switches the lot off.
+     ====================================================================== */
+  :root{
+    --ease:cubic-bezier(.22,.61,.36,1);
+    --ease-out:cubic-bezier(.16,1,.3,1);
+    --dur-fast:.13s;
+    --dur:.2s;
+    --glow:0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  /* ---- entrances ---- */
+  @keyframes rowIn{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
+  /* Only direct children of the feed: rows, separators, turn cards. */
+  #log > *{animation:rowIn var(--dur) var(--ease-out) both}
+
+  @keyframes reveal{from{opacity:0; transform:translateY(-3px)} to{opacity:1; transform:none}}
+  details[open] > *:not(summary){animation:reveal var(--dur) var(--ease-out) both}
+
+  @keyframes barIn{from{opacity:0; transform:translateY(-6px) scale(.99)} to{opacity:1; transform:none}}
+  .ts-search{animation:barIn var(--dur-fast) var(--ease-out)}
+  .jump-tip{animation:barIn var(--dur-fast) var(--ease-out)}
+
+  @keyframes drawerIn{from{opacity:0; transform:translateX(16px)} to{opacity:1; transform:none}}
+  .fv{animation:drawerIn var(--dur) var(--ease-out)}
+
+  /* ---- heartbeat on the current search hit ---- */
+  @keyframes hitPulse{
+    0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent)}
+    100%{box-shadow:0 0 0 7px transparent}
+  }
+  mark.ts-hit.cur{animation:hitPulse .55s var(--ease) 1}
+
+  /* ---- buttons: lift on hover, settle on press ---- */
+  button{transition:background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)}
+  button:hover:not(:disabled){transform:translateY(-1px)}
+  button:active:not(:disabled){transform:translateY(0) scale(.985)}
+  button.primary{
+    background:linear-gradient(180deg, var(--accent), var(--accent2));
+    border-color:transparent; color:#fff; font-weight:600;
+    box-shadow:0 2px 10px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  button.primary:hover:not(:disabled){filter:brightness(1.07)}
+
+  /* ---- header title: a quiet gradient, not a rainbow ---- */
+  header h1{
+    background:linear-gradient(92deg, var(--fg) 30%, var(--accent));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+
+  /* ---- session rows ---- */
+  .sess{transition:background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease)}
+  .sess:hover{transform:translateX(2px)}
+  .sess.active{box-shadow:inset 2px 0 0 var(--accent)}
+
+  /* ---- jump rail ---- */
+  .jump-dot:hover{transform:scaleX(1.15)}
+
+  /* ---- composer focus halo ---- */
+  textarea:focus{box-shadow:var(--glow); transition:border-color var(--dur-fast) var(--ease), box-shadow var(--dur) var(--ease)}
+  .composer .icon:active{transform:scale(.94)}
+
+  /* ---- cards get a hairline lift on hover, nothing more ---- */
+  details.cmd, details.filechg, details.cmd-group, details.fch-group{
+    transition:border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  }
+  details.cmd:hover, details.filechg:hover{border-color:color-mix(in srgb, var(--accent) 35%, var(--line))}
+
+  /* ---- theme switch is a fade over every surface, not a flash ----
+     Deliberately a TEMPORARY class added only while the theme changes. A permanent
+     `transition` on these elements would override each component's own transition
+     (it did: it silently killed the button hover lift). */
+  body.theming, body.theming *:not(mark){
+    transition:background-color .2s var(--ease), border-color .2s var(--ease), color .2s var(--ease) !important;
+  }
+
+  /* ---- keyboard focus is visible, and looks like the accent ---- */
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
+
+  /* ---- the header lifts off the transcript once you scroll ---- */
+  header{transition:box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease)}
+  header.scrolled{box-shadow:0 6px 18px rgba(0,0,0,.22); border-bottom-color:transparent}
+
+  /* ---- scrollbars: thin, and only visible against the panel ---- */
+  #log, #sessionList, aside, .fv-body{scrollbar-width:thin; scrollbar-color:var(--line) transparent}
+  #log::-webkit-scrollbar, #sessionList::-webkit-scrollbar,
+  aside::-webkit-scrollbar, .fv-body::-webkit-scrollbar{width:10px; height:10px}
+  #log::-webkit-scrollbar-thumb, #sessionList::-webkit-scrollbar-thumb,
+  aside::-webkit-scrollbar-thumb, .fv-body::-webkit-scrollbar-thumb{
+    background:var(--line); border-radius:6px;
+    border:2px solid transparent; background-clip:padding-box;
+  }
+  #log::-webkit-scrollbar-thumb:hover, #sessionList::-webkit-scrollbar-thumb:hover,
+  aside::-webkit-scrollbar-thumb:hover, .fv-body::-webkit-scrollbar-thumb:hover{
+    background:var(--dim); background-clip:padding-box;
+  }
+  #log::-webkit-scrollbar-track, #sessionList::-webkit-scrollbar-track,
+  aside::-webkit-scrollbar-track, .fv-body::-webkit-scrollbar-track{background:transparent}
+
+  /* ---- respect the system setting ---- */
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after{
+      animation-duration:.001ms !important;
+      animation-iteration-count:1 !important;
+      transition-duration:.001ms !important;
+      scroll-behavior:auto !important;
+    }
+  }
+
   @media(max-width:1000px){
     main{position:relative}
     aside{position:absolute;inset:0 auto 0 0;z-index:20;width:min(340px,90vw);box-shadow:var(--shadow)}
@@ -994,6 +1114,11 @@
   const mql = window.matchMedia('(prefers-color-scheme: light)');
   function applyTheme(pref){
     const resolved = pref === 'system' ? (mql.matches ? 'light' : 'dark') : pref;
+    // Fade the surfaces while the switch happens; the class is removed afterwards
+    // so it never fights the components' own transitions.
+    document.body.classList.add('theming');
+    clearTimeout(applyTheme.timer);
+    applyTheme.timer = setTimeout(() => document.body.classList.remove('theming'), 260);
     document.documentElement.setAttribute('data-theme', resolved);
   }
   mql.addEventListener('change', () => {
@@ -3572,6 +3697,10 @@
   $('prompt').addEventListener('paste', handlePaste);
   // Scrolling the feed moves the rail's active marker.
   log.addEventListener('scroll', updateJumpActive, { passive:true });
+  // The header lifts off the transcript once there is something above the fold.
+  log.addEventListener('scroll', () => {
+    document.querySelector('header').classList.toggle('scrolled', log.scrollTop > 4);
+  }, { passive: true });
   // Hovering the rail and turning the wheel scrolls the rail itself.
   $('jumpRail').addEventListener('wheel', onRailWheel, { passive:false });
   window.addEventListener('resize', () => { updateJumpActive(); hideJumpTip(); });

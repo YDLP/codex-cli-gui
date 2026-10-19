@@ -26,6 +26,7 @@ better. This exists for the machines that fall through the cracks.
 - **Session list** — continue, rename, delete past sessions, history replayed from disk
 - **Session search** — filters titles as you type and searches each conversation's text, showing the matching context with the keyword highlighted
 - **In-session search** — Ctrl+F finds a keyword in the open conversation, marks every hit, and Enter / Shift+Enter or `‹ ›` jump between them
+- **Light motion** — cards and replies fade in, controls lift on hover, disclosure arrows rotate, and the theme change fades over the surfaces. All of it is CSS and switches off when the OS asks for reduced motion
 - **Model + reasoning-effort pickers** — read from the CLI's own catalog
 - **Permission modes** — read-only / workspace-write / full-access, switchable per session
 - **Attachments** — images go in as images, everything else is handed over by path
