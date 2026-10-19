@@ -84,6 +84,19 @@
 
   /* ---- prompt jump rail ---- */
   .chat{position:relative}
+  /* ---- in-session keyword search ---- */
+  .ts-search{
+    position:absolute; top:8px; right:44px; z-index:6;
+    display:flex; align-items:center; gap:6px; padding:5px 7px;
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    box-shadow:0 6px 20px rgba(0,0,0,.28);
+  }
+  .ts-search[hidden]{display:none}
+  .ts-search input{width:220px; padding:3px 8px; font-size:12.5px}
+  .ts-count{color:var(--dim); font-size:11.5px; min-width:44px; text-align:center}
+  /* Every hit is marked; the one you are on is stronger, so "3/12" has a referent. */
+  mark.ts-hit{background:rgba(255,205,0,.32); color:inherit; border-radius:2px}
+  mark.ts-hit.cur{background:var(--accent); color:#fff}
   .jump-rail{
     position:absolute; top:12px; right:4px; width:26px;
     /* At most JUMP_VISIBLE_DOTS dots are shown; the rest scroll under the wheel.
@@ -537,6 +550,7 @@
   <span class="badge" id="busyBadge">空闲</span>
   <div class="spacer"></div>
   <button id="btnSessions" title="显示/隐藏会话列表">会话</button>
+  <button id="btnFind" class="icon" title="在本次会话中搜索（Ctrl+F）">🔍</button>
   <button id="btnTheme" class="icon" title="切换深色/浅色">🌗</button>
   <button id="btnNew" title="开始新会话（丢弃当前上下文）">新会话</button>
   <button id="btnClear" title="只清空显示，不动会话上下文">清屏</button>
@@ -663,6 +677,15 @@
          preview: without it there is no way to tell where a jump would land. -->
     <nav class="jump-rail" id="jumpRail" aria-label="会话跳转"></nav>
     <div class="jump-tip" id="jumpTip" hidden></div>
+    <!-- In-session keyword search: finds a word across the whole transcript and
+         jumps between the turns it appears in. Ctrl+F opens it. -->
+    <div class="ts-search" id="tsSearch" hidden>
+      <input id="tsInput" type="search" placeholder="在本次会话中搜索…" autocomplete="off">
+      <span class="ts-count" id="tsCount">0/0</span>
+      <button id="tsPrev" class="icon" title="上一个（Shift+Enter）">‹</button>
+      <button id="tsNext" class="icon" title="下一个（Enter）">›</button>
+      <button id="tsClose" class="icon" title="关闭（Esc）">✕</button>
+    </div>
     <div id="log"></div>
     <footer>
       <div class="attach-bar" id="attachBar"></div>
@@ -1164,6 +1187,97 @@
       rail.appendChild(b);
     });
     updateJumpActive();
+  }
+
+  // --------------------------------------------- in-session keyword search
+  // The session-level search answers "which conversation was that in"; this one
+  // answers "where in THIS conversation", and jumps between the turns it hits.
+  // Highlights are real <mark> elements, so "3/12" has something to point at.
+  let tsQuery = '';
+  let tsHits = [];
+  let tsIndex = -1;
+
+  function tsClearMarks(){
+    for (const m of log.querySelectorAll('mark.ts-hit')){
+      const parent = m.parentNode;
+      if (!parent) continue;
+      parent.replaceChild(document.createTextNode(m.textContent), m);
+      parent.normalize();
+    }
+    tsHits = [];
+    tsIndex = -1;
+  }
+
+  function tsUpdateCount(){
+    $('tsCount').textContent = tsHits.length ? (tsIndex + 1) + '/' + tsHits.length : '0/0';
+  }
+
+  function tsGoto(i){
+    if (!tsHits.length) return;
+    tsIndex = ((i % tsHits.length) + tsHits.length) % tsHits.length;
+    for (const m of tsHits) m.classList.remove('cur');
+    const el = tsHits[tsIndex];
+    el.classList.add('cur');
+    el.scrollIntoView({ block: 'center' });
+    tsUpdateCount();
+  }
+
+  function tsRunSearch(raw){
+    const q = String(raw || '');
+    tsClearMarks();
+    tsQuery = q;
+    if (!q){ tsUpdateCount(); return; }
+    const lower = q.toLowerCase();
+    const MAX_HITS = 600;      // a common word must not create thousands of nodes
+    const walker = document.createTreeWalker(log, NodeFilter.SHOW_TEXT, {
+      acceptNode(node){
+        const p = node.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        if (p.closest('mark.ts-hit, .ts-search, script, style')) return NodeFilter.FILTER_REJECT;
+        const v = node.nodeValue || '';
+        return v.toLowerCase().indexOf(lower) !== -1 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    const targets = [];
+    while (walker.nextNode()) targets.push(walker.currentNode);
+
+    for (const node of targets){
+      if (tsHits.length >= MAX_HITS) break;
+      const text = node.nodeValue || '';
+      const hay = text.toLowerCase();
+      const frag = document.createDocumentFragment();
+      let from = 0, at, last = 0;
+      while ((at = hay.indexOf(lower, from)) !== -1 && tsHits.length < MAX_HITS){
+        if (at > last) frag.appendChild(document.createTextNode(text.slice(last, at)));
+        const mark = document.createElement('mark');
+        mark.className = 'ts-hit';
+        mark.textContent = text.slice(at, at + q.length);
+        frag.appendChild(mark);
+        tsHits.push(mark);
+        last = at + q.length;
+        from = last;
+      }
+      if (!last) continue;
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.replaceWith(frag);
+    }
+    tsIndex = tsHits.length ? 0 : -1;
+    if (tsIndex >= 0) tsGoto(0);
+    tsUpdateCount();
+  }
+
+  function tsOpen(){
+    $('tsSearch').hidden = false;
+    $('tsInput').focus();
+    $('tsInput').select();
+  }
+
+  function tsClose(){
+    $('tsSearch').hidden = true;
+    $('tsInput').value = '';
+    tsClearMarks();
+    tsQuery = '';
+    tsUpdateCount();
   }
 
   /**
@@ -2538,6 +2652,9 @@
         }
         // Add the diffs the live events could not carry (see addFileChange).
         if (Array.isArray(ev.fileChanges)) upgradeFileChangeCards(ev.fileChanges);
+        // Re-rendering a bubble drops the highlight <mark>s, so an open search is
+        // re-applied now that the transcript has settled.
+        if (tsQuery && !$('tsSearch').hidden) setTimeout(() => tsRunSearch(tsQuery), 0);
         break;
       }
       case 'turn.failed': runFailed = true; addError(ev.error?.message || JSON.stringify(ev.error)); break;
@@ -3349,6 +3466,16 @@
     if (settingsDrawerMedia.matches) $('aside').classList.add('hidden');
   };
   $('btnRefreshSessions').onclick = () => { status('刷新会话列表…'); loadSessions(); };
+  // --- in-session keyword search wiring ---
+  $('btnFind').onclick = tsOpen;
+  $('tsInput').addEventListener('input', () => tsRunSearch($('tsInput').value));
+  $('tsInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape'){ e.preventDefault(); tsClose(); return; }
+    if (e.key === 'Enter'){ e.preventDefault(); tsGoto(tsIndex + (e.shiftKey ? -1 : 1)); }
+  });
+  $('tsPrev').onclick = () => tsGoto(tsIndex - 1);
+  $('tsNext').onclick = () => tsGoto(tsIndex + 1);
+  $('tsClose').onclick = tsClose;
   // --- session search wiring ---
   $('sessSearch').addEventListener('input', onSessSearchInput);
   $('sessSearch').addEventListener('keydown', (e) => {
@@ -3401,8 +3528,15 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!$('fileViewer').hidden){ e.stopPropagation(); closeFileViewer(); }
+    if (!$('fileViewer').hidden){ e.stopPropagation(); closeFileViewer(); return; }
+    if (!$('tsSearch').hidden){ e.stopPropagation(); tsClose(); }
   }, true);
+  // Ctrl+F means "find in this conversation", not the browser's own find bar.
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'f') return;
+    e.preventDefault();
+    tsOpen();
+  });
 
   $('prompt').addEventListener('paste', handlePaste);
   // Scrolling the feed moves the rail's active marker.

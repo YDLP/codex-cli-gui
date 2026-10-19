@@ -60,6 +60,11 @@ const read = (p) => new Promise((res, rej) => {
     ['content search goes through the bridge', /api\/sessions\/search/],
     ['a hit is explained with a highlighted snippet', /function snippetNode/],
     ['the list filters as you type', /function visibleSessions/],
+    // In-session search: every hit marked, jump between them.
+    ['Ctrl+F opens an in-session search', /id="tsInput"/],
+    ['each occurrence gets a mark', /className = 'ts-hit'/],
+    ['next/previous hops between hits', /function tsGoto/],
+    ['clearing restores the transcript exactly', /function tsClearMarks/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

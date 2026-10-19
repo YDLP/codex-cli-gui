@@ -21,6 +21,7 @@
 - **和 Codex CLI 对话** —— Enter 发送、Shift+Enter 换行、中文输入法选词不会误发
 - **会话列表** —— 继续、重命名、删除历史会话，历史从磁盘回放
 - **会话搜索** —— 按标题即时过滤，并搜索每次会话的正文内容；命中处给出关键词高亮的上下文摘要
+- **会话内搜索** —— Ctrl+F 在当前对话里找关键词，所有命中高亮，`Enter`/`Shift+Enter` 或 `‹ ›` 在命中之间跳转
 - **模型与思维强度下拉框** —— 数据来自 CLI 自己的目录
 - **权限模式** —— 只读 / 工作区可写 / 完全放开，可按会话切换
 - **附件** —— 图片作为图片输入，其它文件通过路径交给 Codex
@@ -142,7 +143,7 @@ cmd /c "stop-codex-gui.cmd --no-pause"
 | **不能导出** | — | 没法把整个对话导出成 Markdown。 |
 | **没有并排 diff 视图** | `index.html`（`diffNode`） | diff 是统一格式纯文本，没有分栏、没有语法高亮。 |
 | **多标签页没协调** | `bridge.cjs` | 同一会话两个标签页会打架；有 409 保护但没有共享状态。 |
-| **快捷键太少** | `index.html` | 只有 Enter / Shift+Enter / Escape。 |
+| **快捷键太少** | `index.html` | 只有 Enter / Shift+Enter / Escape / Ctrl+F。 |
 | **模型目录是静态的** | `models.json`、`extract-models.cjs` | CLI 出新模型时要手动跑 `node extract-models.cjs`。 |
 | **没有 mac/Linux 启动脚本** | — | `launch.cjs` 能用，`.cmd` / `.vbs` / 快捷方式不能。 |
 | **没有费用汇总** | — | 显示了每轮 token，但没有跨会话合计。 |

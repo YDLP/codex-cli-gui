@@ -25,6 +25,7 @@ better. This exists for the machines that fall through the cracks.
 - **Chat with the Codex CLI** — Enter sends, Shift+Enter newlines, IME-safe
 - **Session list** — continue, rename, delete past sessions, history replayed from disk
 - **Session search** — filters titles as you type and searches each conversation's text, showing the matching context with the keyword highlighted
+- **In-session search** — Ctrl+F finds a keyword in the open conversation, marks every hit, and Enter / Shift+Enter or `‹ ›` jump between them
 - **Model + reasoning-effort pickers** — read from the CLI's own catalog
 - **Permission modes** — read-only / workspace-write / full-access, switchable per session
 - **Attachments** — images go in as images, everything else is handed over by path
@@ -175,7 +176,7 @@ want to use this as a baseline, these are honest starting points, roughly by val
 | **No export** | — | Copying a whole conversation out as Markdown is not possible. |
 | **No side-by-side diff view** | `index.html` (`diffNode`) | Diffs render as unified text; there is no split view or syntax highlighting. |
 | **Multi-tab coordination** | `bridge.cjs` | Two tabs on the same session race; there is a 409 guard but no shared state. |
-| **Few keyboard shortcuts** | `index.html` | Enter / Shift+Enter / Escape only. |
+| **Few keyboard shortcuts** | `index.html` | Enter / Shift+Enter / Escape / Ctrl+F only. |
 | **Model catalog is static** | `models.json`, `extract-models.cjs` | Needs `node extract-models.cjs` when the CLI ships new models. |
 | **No mac/Linux launchers** | — | `launch.cjs` works; the `.cmd` / `.vbs` / shortcut scripts do not. |
 | **No cost aggregation** | — | Per-turn tokens are shown; nothing sums across sessions. |

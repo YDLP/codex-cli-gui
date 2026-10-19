@@ -259,6 +259,61 @@ async function main(){
     assert.equal(await evaluate("$test('cwd').value"),workspaceA);
     assert.match(await evaluate("$test('ctxText').textContent"),/1,100/);
   });
+  await check('in-session search marks every hit and jumps between them',async()=>{
+    // Requested as "会话内的关键词轮次搜索和跳转": the session-wide search answers
+    // "which conversation", this one answers "where in THIS conversation".
+    await evaluate("$test('btnFind').click()");
+    await waitUI("!$test('tsSearch').hidden");
+    assert.equal(await evaluate("document.activeElement === $test('tsInput')"),true,
+      'opening the search must focus the field');
+
+    // "answer" appears once in each of the two replies.
+    await evaluate(`(() => { const i=$test('tsInput'); i.value='answer';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await sleep(300);
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      count:$test('tsCount').textContent,
+      marks:document.querySelectorAll('#log mark.ts-hit').length,
+      current:document.querySelectorAll('#log mark.ts-hit.cur').length,
+      first:(document.querySelector('#log mark.ts-hit')||{}).textContent||''
+    })`));
+    console.log('       in-session search:', JSON.stringify(st));
+    assert.equal(st.marks,2,'every occurrence gets a mark: '+JSON.stringify(st));
+    assert.equal(st.current,1,'exactly one mark is the current one: '+JSON.stringify(st));
+    assert.equal(st.count,'1/2','the counter starts at the first hit: '+JSON.stringify(st));
+    assert.equal(st.first,'answer','the mark holds the matched text: '+JSON.stringify(st));
+
+    // Next / previous wrap around, and Enter drives it too.
+    await evaluate("$test('tsNext').click()");
+    await sleep(120);
+    assert.equal(await evaluate("$test('tsCount').textContent"),'2/2','next moves forward');
+    await evaluate("$test('tsNext').click()");
+    await sleep(120);
+    assert.equal(await evaluate("$test('tsCount').textContent"),'1/2','next wraps to the start');
+    await evaluate("$test('tsPrev').click()");
+    await sleep(120);
+    assert.equal(await evaluate("$test('tsCount').textContent"),'2/2','previous wraps backwards');
+    await evaluate("$test('tsInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))");
+    await sleep(120);
+    assert.equal(await evaluate("$test('tsCount').textContent"),'1/2','Enter advances');
+
+    // A word that is not there must not leave stale highlights behind.
+    await evaluate(`(() => { const i=$test('tsInput'); i.value='zzz-not-in-transcript';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await sleep(250);
+    assert.equal(await evaluate("document.querySelectorAll('#log mark.ts-hit').length"),0,
+      'the previous highlights are cleared when the query changes');
+    assert.equal(await evaluate("$test('tsCount').textContent"),'0/0');
+
+    // Esc closes and removes every mark, so the transcript is untouched.
+    await evaluate("$test('tsInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await sleep(200);
+    assert.equal(await evaluate("$test('tsSearch').hidden"),true,'Esc closes the bar');
+    assert.equal(await evaluate("document.querySelectorAll('#log mark.ts-hit').length"),0,'no marks remain');
+    assert.equal(await evaluate("Array.from(document.querySelectorAll('#log .bubble'),x=>x.textContent).join('|')"),
+      'Session A user1|Session A answer1|Session A user2|Session A answer2',
+      'the transcript text must be unchanged after clearing the search');
+  });
   await check('manual context-window override survives history loading',async()=>{
     await evaluate("$test('contextWindow').value='2000';$test('contextWindow').dispatchEvent(new Event('change'));document.querySelectorAll('.sess')[1].click()");
     await waitUI("$test('status').textContent === '已切换会话'");
