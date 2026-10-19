@@ -55,6 +55,11 @@ const read = (p) => new Promise((res, rej) => {
     ['non-markdown files get numbered rows', /className = 'fv-l'/],
     ['a line can be jumped to', /function jumpToViewerLine/],
     ['the default-app open is still available', /id="fvOpen"/],
+    // Session search: instant filter on the list, then conversation text.
+    ['the search box exists', /id="sessSearch"/],
+    ['content search goes through the bridge', /api\/sessions\/search/],
+    ['a hit is explained with a highlighted snippet', /function snippetNode/],
+    ['the list filters as you type', /function visibleSessions/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

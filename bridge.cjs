@@ -642,6 +642,40 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    /**
+     * Keyword search across session CONTENT.
+     *
+     * The title only carries the first prompt, so a word from the middle of a long
+     * conversation cannot be found from the list. This walks the rollout files and
+     * reports one snippet per matching session, which is the part the list needs.
+     *
+     * Bounded on purpose: a cap on sessions scanned and an early exit once the
+     * budget is spent, so a large history cannot stall the request.
+     */
+    if (req.method === 'GET' && p === '/api/sessions/search') {
+      const query = String(url.searchParams.get('q') || '').trim();
+      if (query.length < 1) return json(res, 200, { query, hits: {} });
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 80));
+      let sessions = [];
+      try {
+        sessions = await appserver.listSessions({ limit, proxy: settings.proxy });
+      } catch (e) {
+        return json(res, 200, { query, hits: {}, error: e.message });
+      }
+      const hits = {};
+      const started = Date.now();
+      let matched = 0;
+      for (const s of sessions){
+        if (!s || !s.id) continue;
+        if (Date.now() - started > 8000) break;        // never hang the pane
+        const r = rollout.searchSession(s.id, query, { maxChars: 4 * 1024 * 1024 });
+        if (r) { hits[s.id] = r; matched++; }
+        if (matched >= 60) break;
+      }
+      json(res, 200, { query, hits, scanned: sessions.length, elapsed: Date.now() - started });
+      return;
+    }
+
     if (req.method === 'POST' && p === '/api/sessions/delete') {
       const { threadId } = await readBody(req);
       if (!threadId) { json(res, 400, { error: 'threadId required' }); return; }

@@ -111,6 +111,14 @@ async function main(){
     const response=data=>new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}});
     window.fetch=async (url,options={})=>{
       const t=window.__test;
+      if(String(url).startsWith('/api/sessions/search')){
+        // The panel asks the bridge to search conversation text; the stub answers
+        // from __test.searchHits so the UI path can be checked without files.
+        const q=new URL(String(url),location.href).searchParams.get('q')||'';
+        t.searchCalls=(t.searchCalls||0)+1;
+        t.lastSearchQuery=q;
+        return response({query:q,hits:t.searchHits||{},scanned:(t.sessions||[]).length});
+      }
       if(String(url).startsWith('/api/sessions')){
         t.sessionsCalls=(t.sessionsCalls||0)+1;
         t.lastSessionsPayload=t.sessions;
@@ -192,6 +200,51 @@ async function main(){
       {id:a,title:'Session A',cwd:workspaceA},{id:b,title:'Session B',cwd:workspaceB}])}`);
     await evaluate("$test('btnRefreshSessions').click()");
     await waitUI("document.querySelectorAll('.sess').length === 2");
+  });
+  await check('session search filters by title and by conversation content',async()=>{
+    // The title only carries the first prompt, so searching has to reach into the
+    // conversation text as well -- that is the whole point of the feature.
+    await evaluate("document.querySelectorAll('.sess').length");
+    // 1. A keyword that only appears in the CONTENT of session B.
+    await evaluate("__test.searchHits=Object.fromEntries([[" +
+      JSON.stringify(b) + ",{count:2,snippet:'…the CAN bus went down during Bus-Off recovery…',role:'assistant'}]]);");
+    await evaluate(`(() => { const i=$test('sessSearch'); i.value='Bus-Off';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await waitUI("/内容匹配 1 个/.test($test('sessSearchInfo').textContent)",8000);
+    const content=JSON.parse(await evaluate(`JSON.stringify({
+      info:$test('sessSearchInfo').textContent,
+      rows:document.querySelectorAll('#sessionList .sess').length,
+      hits:document.querySelectorAll('#sessionList .sess-hit').length,
+      mark:(document.querySelector('#sessionList .sess-hit mark')||{}).textContent||'',
+      snippet:(document.querySelector('#sessionList .sess-hit')||{}).textContent||''
+    })`));
+    console.log('       content search:', JSON.stringify(content));
+    assert.equal(content.rows,1,'only the matching session is listed: '+JSON.stringify(content));
+    assert.equal(content.hits,1,'the reason is shown as a snippet: '+JSON.stringify(content));
+    assert.equal(content.mark,'Bus-Off','the keyword is highlighted: '+JSON.stringify(content));
+    assert.match(content.info,/标题匹配 0 个 · 内容匹配 1 个/,'the counters: '+JSON.stringify(content));
+
+    // 2. A keyword that is in a TITLE is found without asking the bridge at all.
+    await evaluate("__test.searchHits={}");
+    await evaluate(`(() => { const i=$test('sessSearch'); i.value='Session A';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await sleep(400);
+    assert.equal(await evaluate("document.querySelectorAll('#sessionList .sess').length"),1,
+      'a title match filters the list immediately');
+
+    // 3. Nothing matches: say so instead of showing an empty pane.
+    await evaluate(`(() => { const i=$test('sessSearch'); i.value='zzz-not-anywhere';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await waitUI("/没有找到/.test($test('sessSearchInfo').textContent)",8000);
+    assert.equal(await evaluate("document.querySelectorAll('#sessionList .sess').length"),0);
+
+    // 4. Esc clears the search and restores the full list.
+    await evaluate("$test('sessSearch').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await sleep(300);
+    assert.equal(await evaluate("document.querySelectorAll('#sessionList .sess').length"),2,
+      'clearing the search restores every session');
+    assert.equal(await evaluate("$test('sessSearchInfo').hidden"),true,'the info line is hidden again');
+    await evaluate("delete __test.searchHits");
   });
   await check('history keeps four ordered bubbles and switches the workspace',async()=>{
     await evaluate("document.querySelectorAll('.sess')[0].click()");

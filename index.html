@@ -424,6 +424,20 @@
   }
   .sessions-head h2{font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); margin:0; flex:1}
   .sessions-head button{padding:3px 8px; font-size:11px}
+  /* --- session search --- */
+  .sess-search{display:flex; gap:6px; padding:7px 10px; border-bottom:1px solid var(--line); flex:0 0 auto}
+  .sess-search input{flex:1; min-width:0; padding:4px 8px; font-size:12px}
+  .sess-search-info{
+    padding:5px 11px; font-size:11px; color:var(--dim);
+    border-bottom:1px solid var(--line); flex:0 0 auto;
+  }
+  .sess-search-info b{color:var(--accent); font-weight:600}
+  /* Why a session matched: the sentence around the keyword. */
+  .sess-hit{
+    margin-top:4px; font-size:11px; color:var(--dim); line-height:1.45;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .sess-hit mark{background:transparent; color:var(--accent); font-weight:600}
   #sessionList{flex:1; overflow-y:auto; padding:6px}
   .sess{
     padding:8px 10px; border-radius:6px; cursor:pointer; border:1px solid transparent;
@@ -535,6 +549,14 @@
       <h2>会话</h2>
       <button id="btnRefreshSessions" title="刷新会话列表">刷新</button>
     </div>
+    <!-- Filters the list as you type; after a pause it also searches the
+         conversation text of every session, so a word can be found even when the
+         title says nothing about it. -->
+    <div class="sess-search">
+      <input id="sessSearch" type="search" placeholder="搜索会话（标题或内容）" autocomplete="off">
+      <button id="btnClearSearch" class="icon" title="清除搜索" hidden>✕</button>
+    </div>
+    <div id="sessSearchInfo" class="sess-search-info" hidden></div>
     <div id="sessionList"></div>
   </section>
 
@@ -2725,6 +2747,105 @@
     return '(无标题会话)';
   }
 
+  // ------------------------------------------------------------- session search
+  // Two layers: the list filters instantly on what is already in memory, and after
+  // a pause the bridge is asked to search the conversation TEXT. The title only
+  // holds the first prompt, so a word from the middle of a long session cannot be
+  // found from the list alone.
+  let sessQuery = '';
+  let sessHits = new Map();          // sessionId -> { count, snippet, role }
+  let sessSearchSeq = 0;
+  let sessSearchTimer = null;
+
+  function labelMatches(s, q){
+    if (!q) return true;
+    return sessionLabel(s).toLowerCase().includes(q) ||
+      String(s.title || '').toLowerCase().includes(q);
+  }
+
+  function setSearchInfo(text){
+    const el = $('sessSearchInfo');
+    el.textContent = '';
+    if (!text){ el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = text;
+  }
+
+  /** Build the snippet with the keyword highlighted, using text nodes only. */
+  function snippetNode(snippet, q){
+    const div = document.createElement('div');
+    div.className = 'sess-hit';
+    const text = String(snippet || '');
+    const lower = text.toLowerCase();
+    const ql = String(q || '').toLowerCase();
+    if (!ql){ div.textContent = text; return div; }
+    let from = 0, at;
+    while ((at = lower.indexOf(ql, from)) !== -1){
+      if (at > from) div.appendChild(document.createTextNode(text.slice(from, at)));
+      const mark = document.createElement('mark');
+      mark.textContent = text.slice(at, at + ql.length);
+      div.appendChild(mark);
+      from = at + ql.length;
+    }
+    if (from < text.length) div.appendChild(document.createTextNode(text.slice(from)));
+    return div;
+  }
+
+  function visibleSessions(){
+    const q = sessQuery.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) => labelMatches(s, q) || sessHits.has(s.id));
+  }
+
+  function onSessSearchInput(){
+    const next = $('sessSearch').value;
+    if (next !== sessQuery){
+      // Hits belong to the previous query; drop them so nothing stale is shown.
+      sessHits = new Map();
+      sessSearchSeq++;
+    }
+    sessQuery = next;
+    $('btnClearSearch').hidden = !sessQuery;
+    renderSessions();
+    clearTimeout(sessSearchTimer);
+    const q = sessQuery.trim();
+    if (q.length < 2){
+      setSearchInfo(q.length === 1 ? '继续输入以搜索会话内容' : '');
+      return;
+    }
+    setSearchInfo('正在搜索会话内容…');
+    sessSearchTimer = setTimeout(() => runSessSearch(q), 250);
+  }
+
+  async function runSessSearch(q){
+    const seq = ++sessSearchSeq;
+    try {
+      const r = await requestJSON('/api/sessions/search?q=' + encodeURIComponent(q));
+      if (seq !== sessSearchSeq) return;          // superseded by a newer query
+      sessHits = new Map(Object.entries(r.hits || {}));
+      renderSessions();
+      const ql = q.toLowerCase();
+      const byLabel = sessions.filter((s) => labelMatches(s, ql)).length;
+      const byContent = sessHits.size;
+      if (!byLabel && !byContent) setSearchInfo('没有找到「' + q + '」');
+      else setSearchInfo('标题匹配 ' + byLabel + ' 个 · 内容匹配 ' + byContent +
+        ' 个（共查 ' + (r.scanned ?? sessions.length) + ' 个会话）');
+    } catch (e) {
+      if (seq !== sessSearchSeq) return;
+      setSearchInfo('搜索失败：' + (e.message || '未知错误'));
+    }
+  }
+
+  function clearSessSearch(){
+    $('sessSearch').value = '';
+    sessQuery = '';
+    sessHits = new Map();
+    sessSearchSeq++;
+    $('btnClearSearch').hidden = true;
+    setSearchInfo('');
+    renderSessions();
+  }
+
   function renderSessions(){
     const box = $('sessionList');
     box.innerHTML = '';
@@ -2736,7 +2857,17 @@
       box.appendChild(d);
       return;
     }
-    for (const s of sessions){
+    const q = sessQuery.trim().toLowerCase();
+    const shown = visibleSessions();
+    if (!shown.length){
+      const d = document.createElement('div');
+      d.className = 'meta';
+      d.style.padding = '10px';
+      d.textContent = q ? '这个关键词没有匹配的会话' : '没有会话';
+      box.appendChild(d);
+      return;
+    }
+    for (const s of shown){
       const el = document.createElement('div');
       el.className = 'sess' + (s.id === threadId ? ' active' : '');
       el.dataset.id = s.id;             // so tooling/tests can find a session
@@ -2749,6 +2880,10 @@
       m.className = 'sess-meta';
       m.textContent = fmtTime(s.updatedAt || s.createdAt) + (s.model ? ' · ' + s.model : '');
       el.appendChild(m);
+
+      // Why this session matched: the sentence around the keyword.
+      const hit = q ? sessHits.get(s.id) : null;
+      if (hit && hit.snippet) el.appendChild(snippetNode(hit.snippet, q));
 
       const acts = document.createElement('div');
       acts.className = 'sess-actions';
@@ -3214,6 +3349,12 @@
     if (settingsDrawerMedia.matches) $('aside').classList.add('hidden');
   };
   $('btnRefreshSessions').onclick = () => { status('刷新会话列表…'); loadSessions(); };
+  // --- session search wiring ---
+  $('sessSearch').addEventListener('input', onSessSearchInput);
+  $('sessSearch').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape'){ e.preventDefault(); clearSessSearch(); }
+  });
+  $('btnClearSearch').onclick = clearSessSearch;
   $('btnAttach').onclick = () => $('fileInput').click();
   $('fileInput').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
 

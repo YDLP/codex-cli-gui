@@ -385,4 +385,70 @@ function readLastTurnFileChanges(threadId, { maxChars = 20000 } = {}) {
   });
 }
 
-module.exports = { readConversation, readLastTurnFileChanges, findRollout, SESSIONS_DIR };
+/**
+ * Find a keyword inside one session's conversation.
+ *
+ * Returns `{ count, snippet, role }` or null. Two cheap filters come first: a
+ * session with no occurrence anywhere cannot match, and re-parsing 3 MB of JSONL
+ * just to discover that is wasted work. Only lines that already contain the
+ * needle are parsed.
+ */
+function searchSession(threadId, needle, { maxChars = 4 * 1024 * 1024 } = {}) {
+  const file = findRollout(threadId);
+  if (!file) return null;
+  const lower = String(needle || '').toLowerCase();
+  if (!lower) return null;
+
+  let raw;
+  try {
+    const stat = fs.statSync(file);
+    if (stat.size > maxChars) {
+      const fd = fs.openSync(file, 'r');
+      try {
+        const buf = Buffer.alloc(maxChars);
+        const n = fs.readSync(fd, buf, 0, maxChars, 0);
+        raw = buf.subarray(0, n).toString('utf8');
+      } finally { try { fs.closeSync(fd); } catch {} }
+    } else {
+      raw = fs.readFileSync(file, 'utf8');
+    }
+  } catch { return null; }
+  if (!raw || raw.toLowerCase().indexOf(lower) === -1) return null;
+
+  let count = 0;
+  let snippet = '';
+  let role = '';
+  for (const line of raw.split('\n')) {
+    if (!line || line.toLowerCase().indexOf(lower) === -1) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    if (o.type !== 'response_item') continue;
+    const p = o.payload;
+    if (!p || p.type !== 'message') continue;
+    if (p.role !== 'user' && p.role !== 'assistant') continue;
+    let text = textOf(p.content);
+    if (!text) continue;
+    // The same preamble the transcript hides: matching inside it would report a
+    // hit the user cannot see anywhere.
+    text = text.replace(/<environment_context>[\s\S]*?<\/environment_context>/g, '').trim();
+    if (!text) continue;
+
+    const hay = text.toLowerCase();
+    let from = 0, at, here = 0;
+    while ((at = hay.indexOf(lower, from)) !== -1) { here++; from = at + lower.length; }
+    if (!here) continue;
+    count += here;
+    if (!snippet) {
+      const first = hay.indexOf(lower);
+      const start = Math.max(0, first - 42);
+      const end = Math.min(text.length, first + lower.length + 60);
+      snippet = (start > 0 ? '…' : '') +
+        text.slice(start, end).replace(/\s+/g, ' ').trim() +
+        (end < text.length ? '…' : '');
+      role = p.role;
+    }
+  }
+  return count ? { count, snippet, role } : null;
+}
+
+module.exports = { searchSession, readConversation, readLastTurnFileChanges, findRollout, SESSIONS_DIR };

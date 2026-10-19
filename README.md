@@ -24,6 +24,7 @@ better. This exists for the machines that fall through the cracks.
 
 - **Chat with the Codex CLI** — Enter sends, Shift+Enter newlines, IME-safe
 - **Session list** — continue, rename, delete past sessions, history replayed from disk
+- **Session search** — filters titles as you type and searches each conversation's text, showing the matching context with the keyword highlighted
 - **Model + reasoning-effort pickers** — read from the CLI's own catalog
 - **Permission modes** — read-only / workspace-write / full-access, switchable per session
 - **Attachments** — images go in as images, everything else is handed over by path
@@ -170,7 +171,7 @@ want to use this as a baseline, these are honest starting points, roughly by val
 
 | Gap | Where | Why it matters |
 |---|---|---|
-| **No session search or filter** | `index.html` session list | Once you have 50 sessions you scroll. |
+| **Search covers conversation text, not tool output** | `rollout.cjs` (`searchSession`) | A word that only ever appeared in a command's output will not be found — deliberately, or everything would match. |
 | **No export** | — | Copying a whole conversation out as Markdown is not possible. |
 | **No side-by-side diff view** | `index.html` (`diffNode`) | Diffs render as unified text; there is no split view or syntax highlighting. |
 | **Multi-tab coordination** | `bridge.cjs` | Two tabs on the same session race; there is a 409 guard but no shared state. |
