@@ -197,6 +197,27 @@ async function main(){
     assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#theme option')).map(function(o){return o.value;})"),
       ['dark','light','system'],'all three choices stay explicit');
 
+    // It sits in a row of buttons, so it has to BE one visually. A bare <select>
+    // inherits the browser default (heavy black border, own padding) which is what
+    // was reported as "为什么不统一".
+    const look=JSON.parse(await evaluate(`(() => {
+      const s=document.getElementById('theme'), b=$test('btnNew');
+      const cs=getComputedStyle(s), cb=getComputedStyle(b);
+      return JSON.stringify({
+        hs:Math.round(s.getBoundingClientRect().height), hb:Math.round(b.getBoundingClientRect().height),
+        border:[cs.borderTopColor,cb.borderTopColor],
+        bg:[cs.backgroundColor,cb.backgroundColor],
+        radius:[cs.borderRadius,cb.borderRadius],
+        font:[cs.fontSize,cb.fontSize]
+      });
+    })()`));
+    console.log('       header control look:', JSON.stringify(look));
+    assert.equal(look.hs,look.hb,'the select must be the same height as the buttons: '+JSON.stringify(look));
+    assert.equal(look.border[0],look.border[1],'same border colour: '+JSON.stringify(look));
+    assert.equal(look.bg[0],look.bg[1],'same background: '+JSON.stringify(look));
+    assert.equal(look.radius[0],look.radius[1],'same radius: '+JSON.stringify(look));
+    assert.equal(look.font[0],look.font[1],'same font size: '+JSON.stringify(look));
+
     // Changing it applies immediately and is persisted, not just stored in the DOM.
     await evaluate(`(() => { const s=document.getElementById('theme'); s.value='light';
       s.dispatchEvent(new Event('change',{bubbles:true})); })()`);
