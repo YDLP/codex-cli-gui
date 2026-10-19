@@ -987,30 +987,40 @@ async function main(){
     await evaluate("$test('btnRefreshSessions').click()");
     await waitUI("document.querySelectorAll('.sess').length === 2");
   });
-  await check('a collapsed group stays collapsed when the next command arrives',async()=>{
-    // Reported: "工具卡片折叠之后，如果来了新的命令会强制自动打开，导致折叠失效".
-    // The fixture now pauses between commands, so the collapse can happen mid-turn.
+  await check('a live tool group is folded, and a group you open stays open',async()=>{
+    // Two reports, in order:
+    //   1. "折叠之后，如果来了新的命令会强制自动打开" -> the group must never be
+    //      re-opened behind the user's back;
+    //   2. "每次都还是要手动折叠一次" -> so it must not auto-open at all.
+    // The fixture pauses between commands, so this can be checked mid-turn.
     await evaluate("$test('btnNew').click();$test('btnClear').click();__test.failRun=false;__test.failCheck=false");
     await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
     await evaluate("$test('prompt').value='COLLAPSE_PROBE';$test('btnSend').click()");
-    // Wait until the group exists with at least one command, then close it by hand.
     await waitUI("document.querySelector('#log details.cmd-group') && document.querySelectorAll('#log .grp-body details.cmd').length >= 1",8000);
-    const openedLive=await evaluate("document.querySelector('#log details.cmd-group').open");
-    assert.equal(openedLive,true,'a live group must start expanded so output is visible');
-    // Close it the way a user does: a real click, not a scripted open.
+    assert.equal(await evaluate("document.querySelector('#log details.cmd-group').open"),false,
+      'a live tool group must start folded');
+    // Let the rest of the commands arrive: it must still be folded.
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",12000);
+    assert.equal(await evaluate("document.querySelector('#log details.cmd-group').open"),false,
+      'nothing may auto-open the group during a turn');
+    assert.equal(await evaluate("document.querySelectorAll('#log .grp-body details.cmd').length"),4,
+      'every tool must still be recorded inside the folded group (3 commands + 1 search)');
+
+    // The other half: a group the user opens stays open while more arrive.
+    await evaluate("$test('btnNew').click();$test('btnClear').click()");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='COLLAPSE_PROBE';$test('btnSend').click()");
+    await waitUI("document.querySelector('#log details.cmd-group') && document.querySelectorAll('#log .grp-body details.cmd').length >= 1",8000);
     await evaluate(`const g=document.querySelector('#log details.cmd-group');
       g.querySelector('summary').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));`);
-    await sleep(80);
-    assert.equal(await evaluate("document.querySelector('#log details.cmd-group').open"),false,
-      'the summary click must close the group');
-    assert.equal(await evaluate("document.querySelector('#log details.cmd-group').dataset.userClosed"),'1',
-      'a deliberate close must be remembered');
-    // Let the rest of the commands arrive.
-    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",9000);
-    assert.equal(await evaluate("document.querySelector('#log details.cmd-group').open"),false,
-      'later commands must NOT re-open a group the user closed');
-    assert.equal(await evaluate("document.querySelectorAll('#log .grp-body details.cmd').length"),4,
-      'every tool must still be recorded inside the closed group (3 commands + 1 search; the file change is standalone)');
+    await sleep(100);
+    assert.equal(await evaluate("document.querySelector('#log details.cmd-group').open"),true,
+      'clicking the summary must open the group');
+    assert.equal(await evaluate("document.querySelector('#log details.cmd-group').dataset.userOpened"),'1',
+      'a deliberate open is remembered');
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",12000);
+    assert.equal(await evaluate("document.querySelector('#log details.cmd-group').open"),true,
+      'a group the user opened must stay open as later commands arrive');
   });
   await check('the meter says so while a turn is running',async()=>{
     // `codex exec --json` reports usage only at turn.completed, so during a turn

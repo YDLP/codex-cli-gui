@@ -17,7 +17,9 @@ const read = (p) => new Promise((res, rej) => {
     ['a long command is truncated into a peek', /peek\.length > 64/],
     ['the full command lives in the body', /className = 'cmd-line'/],
     ['programmatic open/close is not read as a user action', /consumeScripted/],
-    ['a live turn keeps its group open', /programmaticOpen\(toolGroup, true\)/],
+    // The group is folded live as well: auto-opening it for every command forced
+    // a manual collapse each turn.
+    ['a live tool group is never auto-opened', /Live: the GROUP stays folded/],
     ['a replayed turn starts folded', /addCmd\(\{ \.\.\.m\.item, status: 'completed' \}, true\)/],
     // Prompt jump rail
     ['the jump rail element exists', /jumpRail/],
@@ -28,7 +30,9 @@ const read = (p) => new Promise((res, rej) => {
     ['it is hidden on narrow screens', /max-width:820px/],
     // A collapse the user made must survive later commands in the same turn.
     ['a deliberate close is remembered', /dataset\.userClosed/],
-    ['later commands do not re-open it', /toolGroup\.dataset\.userClosed !== '1'/],
+    // A group the user OPENS must stay open as later commands arrive.
+    ['a deliberate open is remembered', /setUserOpened\(toolGroup, true\)/],
+    ['the scripted mark is only set when the state really changes', /if \(d\.open === open\) return;/],
     // The meter cannot update mid-turn; it must say the figure is the last turn's.
     ['the meter carries a stale marker', /ctxStaleTag/],
     ['stale figures are dimmed', /#ctxText\.stale/],

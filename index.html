@@ -1722,7 +1722,18 @@
   let collapsingToolCards = false;
 
   /** Open/close without the change being attributed to the user. */
+  /**
+   * Change a <details> without that being read as a user action.
+   *
+   * The `scripted` mark is consumed by the toggle handler, and NO toggle event
+   * fires when the value does not actually change. Marking unconditionally left
+   * the flag behind whenever `open` already equalled the requested value -- which
+   * is the common case, since <details> starts closed -- and the flag then ate the
+   * user's NEXT real click. Symptom: opening a fresh tool group never recorded
+   * `userOpened`, so the end-of-turn collapse shut it again.
+   */
   function programmaticOpen(d, open){
+    if (d.open === open) return;
     d.dataset.scripted = '1';
     d.open = open;
   }
@@ -1847,8 +1858,8 @@
     toolGroupBox.className = 'grp-body';
     toolGroup.appendChild(toolGroupBox);
     toolGroupCount = 0;
-    // Collapsed by default when read from history; opened while a turn is live
-    // (see setToolGroupLive).
+    // Collapsed by default, live or replayed. Nothing auto-opens it any more:
+    // doing that for every command forced the user to fold it by hand each turn.
     programmaticOpen(toolGroup, false);
     toolGroup.addEventListener('toggle', () => {
       if (consumeScripted(toolGroup)) return;              // our own change
@@ -1863,15 +1874,6 @@
     agentRow.insertBefore(toolGroup, agentBubble);
     if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) scrollDown();
     return toolGroup;
-  }
-
-  /** During a live turn the group stays open so output is visible as it arrives. */
-  function setToolGroupLive(on){
-    const g = ensureToolGroup();
-    if (on){
-      programmaticOpen(g, true);
-      refreshToolGroupHeader();
-    }
   }
 
   function refreshToolGroupHeader(){
@@ -2159,10 +2161,12 @@
         // folded -- a refreshed session must look like the finished turn it was.
         programmaticOpen(d, false);
       } else {
-        // Live: keep the group open so output is visible as it arrives -- but only
-        // until the user closes it. Re-opening on every new command silently
-        // undid their click, which is what "折叠失效" was.
-        if (toolGroup.dataset.userClosed !== '1') programmaticOpen(toolGroup, true);
+        // Live: the GROUP stays folded. Opening it for every new command meant
+        // folding it by hand again each time, which is the opposite of what
+        // folding is for. The individual card still opens while it is running, so
+        // the command being executed is visible without expanding the stack.
+        // A group the user opened themselves simply stays open: nothing here
+        // closes it.
         programmaticOpen(d, item.status !== 'completed');
       }
     }
@@ -2222,8 +2226,8 @@
       else setUserOpened(d, false);
     });
     refreshToolGroupHeader();
-    if (!replay) programmaticOpen(toolGroup, true);
-    else programmaticOpen(toolGroup, false);
+    // A web search must not pop the group open either -- same rule as commands.
+    if (replay) programmaticOpen(toolGroup, false);
   }
 
   function addError(text){
