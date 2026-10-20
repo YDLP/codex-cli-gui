@@ -83,6 +83,9 @@ const read = (p) => new Promise((res, rej) => {
     // A new session gets a row before it has an id, and Ctrl+F can use a selection.
     ['a new session gets a stand-in row', /stand_in/],
     ['Ctrl+F can seed itself from the selection', /function selectedTextForSearch/],
+    // Round button that returns to the newest message.
+    ['a jump-to-latest button exists', /id="btnScrollBottom"/],
+    ['it only shows when there is something below', /function updateScrollBottom/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

@@ -1222,6 +1222,61 @@ async function main(){
     assert.match(restored.pill,/402,000/, 'the badge keeps the real sizes: '+JSON.stringify(restored));
     await evaluate("delete __test.usageSeries");
   });
+  await check('a jump-to-latest button appears only when you are above the bottom',async()=>{
+    // Asked for with a screenshot of the round ↓ button above the composer.
+    // The fixture transcript is shorter than the viewport at this point, so pad it
+    // first: the button is about being scrolled up, which needs scrollable content.
+    await evaluate(`(() => {
+      const log = $test('log');
+      for (let i = 0; i < 60; i++) {
+        const d = document.createElement('div');
+        d.className = 'meta scroll-probe';
+        d.textContent = 'padding ' + i;
+        log.appendChild(d);
+      }
+    })()`);
+    await evaluate("$test('log').scrollTop = $test('log').scrollHeight");
+    await sleep(300);
+
+    const atBottom=async()=>{
+      await evaluate("$test('log').scrollTop = $test('log').scrollHeight");
+      await sleep(250);
+      return evaluate("$test('btnScrollBottom').hidden");
+    };
+    assert.equal(await atBottom(),true,'at the bottom there is nothing to jump to');
+
+    await evaluate("$test('log').scrollTop = 0");
+    await sleep(250);
+    const shown=JSON.parse(await evaluate(`JSON.stringify({
+      hidden: $test('btnScrollBottom').hidden,
+      text: $test('btnScrollBottom').textContent,
+      inFooter: $test('btnScrollBottom').parentElement.tagName,
+      round: getComputedStyle($test('btnScrollBottom')).borderRadius,
+      gap: $test('log').scrollHeight - $test('log').scrollTop - $test('log').clientHeight
+    })`));
+    console.log('       scroll-bottom button:', JSON.stringify(shown));
+    assert.ok(shown.gap > 160,'the probe must be scrolled far enough: '+JSON.stringify(shown));
+    assert.equal(shown.hidden,false,'scrolled up, it must show: '+JSON.stringify(shown));
+    assert.equal(shown.inFooter,'FOOTER','it is anchored to the composer: '+JSON.stringify(shown));
+    assert.equal(shown.round,'50%','it is round: '+JSON.stringify(shown));
+
+    // Clicking it returns to the newest message and hides itself again.
+    // Wait for the SCROLL to settle, not for the button to hide: the hide
+    // threshold is a 160px band, so it can disappear while still animating.
+    await evaluate("$test('btnScrollBottom').click()");
+    const gapOf = "$test('log').scrollHeight - $test('log').scrollTop - $test('log').clientHeight";
+    let gap = await evaluate(gapOf);
+    const endAt = Date.now() + 6000;
+    while (gap >= 8 && Date.now() < endAt) {
+      await sleep(120);
+      gap = await evaluate(gapOf);
+    }
+    assert.ok(gap < 8,'it must actually reach the bottom: gap='+gap);
+    assert.equal(await evaluate("$test('btnScrollBottom').hidden"),true,
+      'and then hide itself');
+
+    await evaluate("document.querySelectorAll('#log .scroll-probe').forEach(function(n){ n.remove(); })");
+  });
   await check('the jump rail lists every prompt and previews it on hover',async()=>{
     // Switch to the fixture session that has two prompts.
     await evaluate("$test('btnRefreshSessions').click()");

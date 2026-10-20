@@ -439,7 +439,20 @@
   @keyframes p{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
 
   /* ---- composer ----------------------------------------------------- */
-  footer{flex:0 0 auto; border-top:1px solid var(--line); background:var(--panel); padding:12px 16px}
+  footer{position:relative; flex:0 0 auto; border-top:1px solid var(--line); background:var(--panel); padding:12px 16px}
+  /* Floating "jump to latest": sits just above the composer, so it moves with the
+     composer instead of needing a hard-coded offset. */
+  .scroll-bottom{
+    position:absolute; right:20px; bottom:calc(100% + 10px);
+    width:34px; height:34px; padding:0; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:15px; line-height:1; color:var(--fg);
+    background:var(--panel); border:1px solid var(--line);
+    box-shadow:0 4px 14px rgba(0,0,0,.28);
+    animation:rowIn .16s var(--ease-out);
+  }
+  .scroll-bottom:hover{border-color:var(--accent); color:var(--accent)}
+  .scroll-bottom[hidden]{display:none}
   .composer{display:flex; gap:10px; align-items:flex-end}
   textarea{
     flex:1; min-width:0; resize:vertical; min-height:46px; max-height:280px; padding:10px 12px;
@@ -848,6 +861,9 @@
     </div>
     <div id="log"></div>
     <footer>
+      <!-- Jumps back to the latest message. Floats above the composer, anchored to
+           the footer so it tracks the composer's height instead of a magic offset. -->
+      <button id="btnScrollBottom" class="scroll-bottom" title="跳到最新" hidden>↓</button>
       <div class="attach-bar" id="attachBar"></div>
       <div class="composer">
         <button id="btnAttach" class="icon" title="添加文件（图片、文档、表格、压缩包…任意格式）">📎</button>
@@ -1163,7 +1179,28 @@
   });
 
   // -------------------------------------------------------------- rendering
-  const scrollDown = () => { log.scrollTop = log.scrollHeight; };
+  const scrollDown = () => { log.scrollTop = log.scrollHeight; updateScrollBottom(); };
+
+  /** How far from the bottom still counts as "at the bottom". */
+  const SCROLL_BOTTOM_GAP = 160;
+
+  /**
+   * Show the jump-to-latest button only when there is something below the fold.
+   *
+   * Growth alone does not fire a scroll event, so this is also called after every
+   * render that moves the feed.
+   */
+  function updateScrollBottom(){
+    const btn = $('btnScrollBottom');
+    if (!btn) return;
+    const gap = log.scrollHeight - log.scrollTop - log.clientHeight;
+    btn.hidden = gap < SCROLL_BOTTOM_GAP;
+  }
+
+  function scrollToBottom(){
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    log.scrollTo({ top: log.scrollHeight, behavior: reduce ? 'auto' : 'smooth' });
+  }
 
   /** Append a row at the end of the feed (conversation order). */
   function row(cls, who, node){
@@ -3540,6 +3577,7 @@
     // refresh or a session switch instead of only existing in live memory.
     if (Array.isArray(h.usageSeries)) seedCompaction(h.usageSeries);
     status('已切换会话');
+    updateScrollBottom();
     // The composer reflects THIS session's state, not whatever was running in the
     // one we just left.
     setBusy(!!activeRun());
@@ -3977,13 +4015,15 @@
   $('prompt').addEventListener('paste', handlePaste);
   // Scrolling the feed moves the rail's active marker.
   log.addEventListener('scroll', updateJumpActive, { passive:true });
+  log.addEventListener('scroll', updateScrollBottom, { passive:true });
+  $('btnScrollBottom').onclick = scrollToBottom;
   // The header lifts off the transcript once there is something above the fold.
   log.addEventListener('scroll', () => {
     document.querySelector('header').classList.toggle('scrolled', log.scrollTop > 4);
   }, { passive: true });
   // Hovering the rail and turning the wheel scrolls the rail itself.
   $('jumpRail').addEventListener('wheel', onRailWheel, { passive:false });
-  window.addEventListener('resize', () => { updateJumpActive(); hideJumpTip(); });
+  window.addEventListener('resize', () => { updateJumpActive(); hideJumpTip(); updateScrollBottom(); });
   $('prompt').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     // Enter sends; Shift+Enter and Ctrl/Cmd+Enter insert a newline instead.
