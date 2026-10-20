@@ -323,6 +323,50 @@ async function main(){
     assert.equal(await evaluate("$test('cwd').value"),workspaceA);
     assert.match(await evaluate("$test('ctxText').textContent"),/1,100/);
   });
+  await check('selecting text and pressing Ctrl+F searches for it',async()=>{
+    // Requested: the search only worked by opening it first and then typing; the
+    // natural gesture is to select a word and hit Ctrl+F.
+    await evaluate(`(() => {
+      const bubble = [...document.querySelectorAll('#log .bubble')]
+        .find(function (b) { return (b.textContent || '').indexOf('answer1') >= 0; });
+      // The word may live in a nested text node, not the bubble's first child.
+      const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+      let node = null;
+      while (walker.nextNode()) {
+        if ((walker.currentNode.nodeValue || '').indexOf('answer') >= 0) { node = walker.currentNode; break; }
+      }
+      const at = (node.nodeValue || '').indexOf('answer');
+      const range = document.createRange();
+      range.setStart(node, at); range.setEnd(node, at + 'answer'.length);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    })()`);
+    assert.equal(await evaluate("String(window.getSelection())"),'answer','the selection is in place');
+    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}))");
+    await sleep(300);
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      open: !$test('tsSearch').hidden,
+      value: $test('tsInput').value,
+      marks: document.querySelectorAll('#log mark.ts-hit').length,
+      count: $test('tsCount').textContent
+    })`));
+    console.log('       ctrl-f with a selection:', JSON.stringify(st));
+    assert.equal(st.open,true,'Ctrl+F opens the bar');
+    assert.equal(st.value,'answer','the selected text is the query: '+JSON.stringify(st));
+    assert.ok(st.marks >= 2,'and it is already searched for: '+JSON.stringify(st));
+
+    // A long selection is not a query -- the box opens empty instead.
+    await evaluate("$test('tsInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await evaluate(`(() => {
+      const r = document.createRange(); r.selectNodeContents($test('log'));
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
+    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}))");
+    await sleep(200);
+    assert.equal(await evaluate("$test('tsInput').value"),'',
+      'a whole paragraph is not used as a query');
+    await evaluate("$test('tsInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await evaluate("window.getSelection().removeAllRanges()");
+  });
   await check('in-session search marks every hit and jumps between them',async()=>{
     // Requested as "会话内的关键词轮次搜索和跳转": the session-wide search answers
     // "which conversation", this one answers "where in THIS conversation".
@@ -619,6 +663,46 @@ async function main(){
     assert.equal(await evaluate("$test('busyBadge').dataset.state"),'idle');
     assert.equal(await evaluate("getComputedStyle($test('busyBadge')).color"),'rgb(63, 185, 80)',
       'idle keeps its green, so "ready to send" still reads at a glance');
+  });
+  await check('a brand-new session shows up while its first turn runs',async()=>{
+    // Reported: "新会话第一轮结束前，左边会话列表不显示，也不会转圈". The row only
+    // appeared when the list reloaded AFTER the turn, so the first turn ran
+    // invisibly.
+    await evaluate("$test('btnNew').click();__test.failRun=false;__test.failCheck=false");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='WAIT first turn';$test('btnSend').click()");
+
+    await waitUI("document.querySelector('#sessionList .sess.pending') !== null",6000);
+    const early=JSON.parse(await evaluate(`JSON.stringify({
+      pending: document.querySelectorAll('#sessionList .sess.pending').length,
+      spinner: document.querySelectorAll('#sessionList .sess.pending .sess-state.running').length,
+      active: document.querySelectorAll('#sessionList .sess.pending.active').length,
+      title: (document.querySelector('#sessionList .sess.pending .sess-title')||{}).textContent||'',
+      threadId: $test('threadId').value
+    })`));
+    console.log('       first-turn row:', JSON.stringify(early));
+    assert.equal(early.pending,1,'the new session gets a stand-in row immediately: '+JSON.stringify(early));
+    assert.equal(early.spinner,1,'and it spins: '+JSON.stringify(early));
+    assert.equal(early.active,1,'it is the current session: '+JSON.stringify(early));
+    assert.match(early.title,/WAIT first turn/,'the row shows what was asked: '+JSON.stringify(early));
+
+    // Once the CLI reports the id, the stand-in becomes the real row.
+    await waitUI("$test('threadId').value !== ''",8000);
+    await sleep(400);
+    const bound=JSON.parse(await evaluate(`JSON.stringify({
+      pending: document.querySelectorAll('#sessionList .sess.pending').length,
+      matching: [...document.querySelectorAll('#sessionList .sess')]
+        .filter(function (r) { return r.dataset.id === $test('threadId').value; }).length
+    })`));
+    console.log('       after the id arrives:', JSON.stringify(bound));
+    assert.equal(bound.pending,0,'the stand-in is no longer a placeholder: '+JSON.stringify(bound));
+    assert.equal(bound.matching,1,'it now carries the real session id: '+JSON.stringify(bound));
+
+    await evaluate("$test('btnStop').click()");
+    await waitUI("$test('status').textContent === '已停止'",10000);
+    // Drop the synthetic row again so later checks see the fixture list.
+    await evaluate("$test('btnRefreshSessions').click()");
+    await sleep(300);
   });
   await check('a session keeps running while you work in another',async()=>{
     // Asked for as "左边会话窗口独立工作" plus a spinner / green dot / red dot.
@@ -1373,13 +1457,15 @@ async function main(){
     } catch (e) {
       throw new Error('the turn never started; status was: ' + await evaluate("$test('status').textContent"));
     }
-    assert.doesNotMatch(await evaluate("$test('status').textContent"), /失败|错误/,
-      'the run must not fail before this check: ' + await evaluate("$test('status').textContent"));
+    // ONE snapshot for all three facts. Reading the status twice raced: the turn
+    // could end between the reads, so a passing first read was followed by a
+    // failing second one (observed once as a lone flake).
     const during=JSON.parse(await evaluate(`JSON.stringify({
       tagHidden:document.getElementById('ctxStaleTag').hidden,
       stale:document.getElementById('ctxText').classList.contains('stale'),
       status:document.getElementById('status').textContent})`));
     console.log('       while running:', JSON.stringify(during));
+    assert.doesNotMatch(during.status, /失败|错误/, 'the run must not fail before this check: '+JSON.stringify(during));
     assert.equal(during.tagHidden,false,'the meter must be marked stale during a turn: '+JSON.stringify(during));
     assert.equal(during.stale,true,'the figure must be dimmed while stale: '+JSON.stringify(during));
     assert.match(during.status,/运行中/,'the turn must actually be running: '+JSON.stringify(during));

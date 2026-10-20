@@ -80,6 +80,9 @@ const read = (p) => new Promise((res, rej) => {
     // The answer-done signal must not wait for the process to exit (the bridge
     // side of this is covered by test/bridge.test.cjs).
     ['the page stops spinning on that signal', /name === 'answer_done'/],
+    // A new session gets a row before it has an id, and Ctrl+F can use a selection.
+    ['a new session gets a stand-in row', /stand_in/],
+    ['Ctrl+F can seed itself from the selection', /function selectedTextForSearch/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

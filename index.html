@@ -1464,10 +1464,40 @@
     tsUpdateCount();
   }
 
-  function tsOpen(){
+  /**
+   * Open the search bar, optionally already searching for something.
+   *
+   * `prefill` comes from the current text selection: selecting a word and pressing
+   * Ctrl+F is the normal way to do this, and it used to open an empty box, so the
+   * word had to be typed again.
+   */
+  function tsOpen(prefill){
     $('tsSearch').hidden = false;
+    const text = String(prefill == null ? '' : prefill);
+    if (text){
+      $('tsInput').value = text;
+      tsRunSearch(text);
+    }
     $('tsInput').focus();
     $('tsInput').select();
+  }
+
+  /**
+   * The text to seed the in-session search with.
+   *
+   * Selecting a word and hitting Ctrl+F is how people search, and the box used to
+   * open empty. Long selections are refused: a whole paragraph is not a query.
+   */
+  function selectedTextForSearch(){
+    const sel = window.getSelection ? window.getSelection() : null;
+    if (!sel || sel.isCollapsed) return '';
+    const raw = String(sel.toString() || '').replace(/\s+/g, ' ').trim();
+    if (!raw || raw.length > 100) return '';
+    // Only from the transcript: selecting inside an input already means "edit me".
+    const anchor = sel.anchorNode;
+    const el = anchor && (anchor.nodeType === 1 ? anchor : anchor.parentElement);
+    if (!el || !log.contains(el)) return '';
+    return raw;
   }
 
   function tsClose(){
@@ -2617,15 +2647,23 @@
   }
   // ---------------------------------------------------------------- helpers
 
+  /**
+   * A brand-new session has no id until the CLI reports one, so it cannot be
+   * matched by key. `pendingRun` names the run that owns the composer instead --
+   * two of them can coexist, and only the newest is on screen.
+   */
+  let pendingRun = null;
+  let pendingSeq = 0;
+
   /** The run that belongs to the session currently on screen, if any. */
   function activeRun(){
     return runs.find((r) => r.status === 'running' &&
-      (threadId ? r.sessionKey === threadId : r.sessionKey === 'pending')) || null;
+      (threadId ? r.sessionKey === threadId : r === pendingRun)) || null;
   }
   /** True when THIS run's output belongs on screen right now. */
   function runVisible(run){
     if (!run) return false;
-    return threadId ? run.sessionKey === threadId : run.sessionKey === 'pending';
+    return threadId ? run.sessionKey === threadId : run === pendingRun;
   }
   function statusFor(id){ return sessionStatus.get(id) || ''; }
 
@@ -2948,8 +2986,9 @@
     // The run belongs to THIS session. If you switch away it keeps going; its
     // output is simply not written anywhere until you come back (the turn is on
     // disk by then, so switching back replays it).
+    const isNewSession = !threadId;
     const run = {
-      sessionKey: threadId || 'pending',
+      sessionKey: threadId || ('pending-' + (++pendingSeq)),
       controller: new AbortController(),
       runId: '',
       status: 'running',
@@ -2958,10 +2997,28 @@
       stopRequested: false,
       /** flips to false at turn.completed: the answer is done, the process is not */
       answering: true,
+      /** a stand-in row was inserted for a session that had no id yet */
+      stand_in: false,
       startedAt: Date.now(),
     };
     runs.push(run);
-    if (run.sessionKey !== 'pending') sessionStatus.set(run.sessionKey, 'running');
+    if (isNewSession){
+      pendingRun = run;
+      // MEASURED complaint: "新会话第一轮结束前，左边会话列表不显示，也不会转圈".
+      // The real row only appeared when the session list was reloaded after the
+      // turn, so the first turn ran with no row at all. Put a stand-in row in the
+      // list now; bindRun() rewrites its id when thread.started arrives.
+      sessions.unshift({
+        id: run.sessionKey,
+        pending: true,
+        title: prompt.slice(0, 80) || '(新会话)',
+        model: $('model').value,
+        cwd,
+        updatedAt: Math.floor(Date.now() / 1000),
+      });
+      run.stand_in = true;
+    }
+    sessionStatus.set(run.sessionKey, 'running');
     renderSessions();          // the row shows a spinner straight away
     stopRequested = false;
     runFailed = false;
@@ -3003,11 +3060,16 @@
       /** A run started on a brand-new session learns its id here. */
       const bindRun = (id) => {
         if (!id || run.sessionKey === id) return;
-        if (run.sessionKey === 'pending'){
-          run.sessionKey = id;
-          sessionStatus.set(id, 'running');
-          renderSessions();
-        }
+        if (!run.stand_in) return;
+        const placeholder = sessions.find((s) => s.id === run.sessionKey);
+        const oldKey = run.sessionKey;
+        run.sessionKey = id;
+        run.stand_in = false;
+        if (pendingRun === run) pendingRun = null;      // threadId takes over now
+        if (placeholder){ placeholder.id = id; placeholder.pending = false; }
+        sessionStatus.delete(oldKey);
+        sessionStatus.set(id, run.answering ? 'running' : 'done');
+        renderSessions();
       };
 
       const consume = (flush = false) => {
@@ -3285,9 +3347,11 @@
     }
     for (const s of shown){
       const el = document.createElement('div');
-      el.className = 'sess' + (s.id === threadId ? ' active' : '');
+      // A brand-new session has no id yet; its stand-in row is the current one.
+      const isCurrent = s.id === threadId || (s.pending && !threadId);
+      el.className = 'sess' + (isCurrent ? ' active' : '') + (s.pending ? ' pending' : '');
       el.dataset.id = s.id;             // so tooling/tests can find a session
-      el.title = sessionLabel(s) + '\n' + s.id;
+      el.title = sessionLabel(s) + '\n' + (s.pending ? '（新会话，正在建立）' : s.id);
       const t = document.createElement('div');
       t.className = 'sess-title';
       t.textContent = sessionLabel(s);
@@ -3348,9 +3412,10 @@
         } else addError('删除失败：' + (r.error || '未知错误'));
       };
       acts.appendChild(bRename); acts.appendChild(bDel);
-      el.appendChild(acts);
+      // Rename/delete need a real id, so a stand-in row does not offer them.
+      if (!s.pending) el.appendChild(acts);
 
-      el.onclick = () => switchSession(s);
+      el.onclick = () => { if (!s.pending) switchSession(s); };
       box.appendChild(el);
     }
   }
@@ -3858,7 +3923,7 @@
   document.addEventListener('keydown', (e) => {
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'f') return;
     e.preventDefault();
-    tsOpen();
+    tsOpen(selectedTextForSearch());
   });
 
   $('prompt').addEventListener('paste', handlePaste);
