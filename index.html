@@ -1496,9 +1496,34 @@
       if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
       node.replaceWith(frag);
     }
-    tsIndex = tsHits.length ? 0 : -1;
-    if (tsIndex >= 0) tsGoto(0);
+    // Start from what you are LOOKING at, not from the top of the conversation.
+    // Reported: "会话内搜索会默认跳到第一轮开始，而不是就近" -- every search used to
+    // jump to the first match in the session, however far up that was.
+    const start = tsNearestIndex();
+    tsIndex = start;
+    if (start >= 0) tsGoto(start);
     tsUpdateCount();
+  }
+
+  /**
+   * Index of the hit closest to where the transcript is scrolled.
+   *
+   * The anchor sits a third of the way down the viewport, which is where the eye
+   * usually is. Falls back to 0 when geometry is unavailable (hidden drawer etc.).
+   */
+  function tsNearestIndex(){
+    if (!tsHits.length) return -1;
+    const box = log.getBoundingClientRect();
+    const anchor = box.top + box.height * 0.35;
+    let best = 0;
+    let bestDistance = Infinity;
+    for (let i = 0; i < tsHits.length; i++){
+      const r = tsHits[i].getBoundingClientRect();
+      if (!r.height && !r.width) continue;
+      const distance = Math.abs(r.top - anchor);
+      if (distance < bestDistance){ bestDistance = distance; best = i; }
+    }
+    return best;
   }
 
   /**

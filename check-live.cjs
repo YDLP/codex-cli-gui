@@ -86,6 +86,8 @@ const read = (p) => new Promise((res, rej) => {
     // Round button that returns to the newest message.
     ['a jump-to-latest button exists', /id="btnScrollBottom"/],
     ['it only shows when there is something below', /function updateScrollBottom/],
+    // In-session search starts near the viewport, not at the top of the session.
+    ['search starts from the nearest hit', /function tsNearestIndex/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

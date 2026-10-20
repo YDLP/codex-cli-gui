@@ -468,6 +468,52 @@ async function main(){
     await sleep(150);
     await evaluate("document.getElementById('foldProbe').remove()");
   });
+  await check('in-session search starts from the nearest hit, not the first one',async()=>{
+    // Reported: "会话内搜索会默认跳到第一轮开始，而不是就近". The search used to
+    // select index 0 whatever the transcript was scrolled to.
+    await evaluate(`(() => {
+      const log = $test('log');
+      const pad = (n, text) => {
+        for (let i = 0; i < n; i++) {
+          const d = document.createElement('div');
+          d.className = 'meta hit-probe';
+          d.textContent = i === 0 ? text : 'padding';
+          log.appendChild(d);
+        }
+      };
+      pad(25, 'needle at the top');
+      pad(45, 'padding');
+      pad(25, 'needle at the bottom');
+    })()`);
+    await evaluate("$test('log').scrollTop = $test('log').scrollHeight");
+    await sleep(300);
+
+    await evaluate("$test('btnFind').click()");
+    await waitUI("!$test('tsSearch').hidden");
+    await evaluate(`(() => { const i=$test('tsInput'); i.value='needle';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await sleep(350);
+    const bottom=await evaluate("$test('tsCount').textContent");
+    console.log('       scrolled to the bottom -> ' + bottom);
+
+    // Same query from the top: the answer must follow the viewport, not be fixed.
+    await evaluate("$test('log').scrollTop = 0");
+    await sleep(250);
+    await evaluate(`(() => { const i=$test('tsInput'); i.value='';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await evaluate(`(() => { const i=$test('tsInput'); i.value='needle';
+      i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await sleep(350);
+    const top=await evaluate("$test('tsCount').textContent");
+    console.log('       scrolled to the top -> ' + top);
+
+    assert.equal(bottom,'2/2','from the bottom it starts at the later hit: '+bottom);
+    assert.equal(top,'1/2','from the top it starts at the earlier hit: '+top);
+
+    await evaluate("$test('tsInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await sleep(150);
+    await evaluate("document.querySelectorAll('#log .hit-probe').forEach(function(n){ n.remove(); })");
+  });
   await check('manual context-window override survives history loading',async()=>{
     await evaluate("$test('contextWindow').value='2000';$test('contextWindow').dispatchEvent(new Event('change'));document.querySelectorAll('.sess')[1].click()");
     await waitUI("$test('status').textContent === '已切换会话'");
