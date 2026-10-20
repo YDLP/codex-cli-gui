@@ -146,6 +146,9 @@ async function main(){
             {role:'user',text:session.title+' user2'},{role:'assistant',text:session.title+' answer2'}];
         const result={found:true,cwd:session.cwd,model:'gpt-6.1-sol',contextWindow:475000,
           usage:t.historyUsage||{inputTokens:1000,outputTokens:100,reasoningOutputTokens:50,cachedInputTokens:500},
+          // The stored per-turn series, so the compaction marker can be rebuilt on
+          // replay instead of only existing in live memory.
+          usageSeries:t.usageSeries||[{input:900,output:100},{input:1200,output:120}],
           messages:t.manyMessages||messages};
         if(t.deferHistory)return new Promise(resolve=>{t.resolvers[id]=()=>resolve(response(result));});
         return response(result);
@@ -1196,6 +1199,28 @@ async function main(){
     assert.equal(after.notes,1,'the transcript note must persist: '+JSON.stringify(after));
     assert.match(after.hint,/疑似压缩 1 次/,'the hint must keep the count: '+JSON.stringify(after));
     assert.match(after.hint,/峰值/,'the hint must keep the peak: '+JSON.stringify(after));
+  });
+  await check('the compaction marker survives a refresh or a session switch',async()=>{
+    // Reported: "压缩标记在切换会话窗口或者刷新之后就没了". The count only lived in
+    // page memory and was inferred from turn-to-turn drops; replaying history used
+    // to hand over ONE number, so the inference had nothing to compare.
+    await evaluate(`__test.usageSeries=[{input:400000,output:2000},{input:18000,output:800},{input:19000,output:900}]`);
+    await evaluate("$test('btnNew').click();$test('btnClear').click()");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('btnRefreshSessions').click()");
+    await waitUI("document.querySelectorAll('#sessionList .sess').length >= 1",8000);
+    await evaluate("document.querySelectorAll('#sessionList .sess')[0].click()");
+    await waitUI("$test('status').textContent === '已切换会话'",8000);
+    const restored=JSON.parse(await evaluate(`JSON.stringify({
+      hint:document.getElementById('ctxHint').textContent,
+      badges:document.querySelectorAll('#ctxMarks .compact-pill').length,
+      pill:(document.querySelector('#ctxMarks .compact-pill')||{}).textContent||''
+    })`));
+    console.log('       restored marker:', JSON.stringify(restored));
+    assert.equal(restored.badges,1,'the badge must be rebuilt from the stored series: '+JSON.stringify(restored));
+    assert.match(restored.hint,/疑似压缩 1 次/,'the hint must survive the switch: '+JSON.stringify(restored));
+    assert.match(restored.pill,/402,000/, 'the badge keeps the real sizes: '+JSON.stringify(restored));
+    await evaluate("delete __test.usageSeries");
   });
   await check('the jump rail lists every prompt and previews it on hover',async()=>{
     // Switch to the fixture session that has two prompts.

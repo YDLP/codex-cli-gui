@@ -241,8 +241,27 @@ function readConversation(threadId, { maxMessages = 400, maxChars = 20000 } = {}
   let model = '';
   let cwd = '';
   let permissionMode = '';
+  const usageSeries = [];
+  const pushUsage = (t) => {
+    if (!t || typeof t.input_tokens !== 'number') return;
+    // A zero record exists (seen at 124 points in one real session) and would read
+    // as a 100% drop, i.e. a fake compaction. Only counts that actually measured
+    // something are kept.
+    if (!t.input_tokens && !t.output_tokens) return;
+    const point = {
+      input: t.input_tokens ?? 0,
+      output: t.output_tokens ?? 0,
+      cached: t.cached_input_tokens ?? 0,
+    };
+    // The same turn can be reported twice (token_count event AND usage record);
+    // an identical consecutive point is not a new turn.
+    const last = usageSeries[usageSeries.length - 1];
+    if (last && last.input === point.input && last.output === point.output) return;
+    usageSeries.push(point);
+  };
   const setUsage = (t) => {
     if (!t || typeof t.input_tokens !== 'number') return;
+    pushUsage(t);
     usage = {
       inputTokens: t.input_tokens ?? 0,
       cachedInputTokens: t.cached_input_tokens ?? 0,
@@ -321,7 +340,10 @@ function readConversation(threadId, { maxMessages = 400, maxChars = 20000 } = {}
 
   // Keep the tail if the conversation is enormous.
   const trimmed = messages.length > maxMessages ? messages.slice(-maxMessages) : messages;
-  return { messages: trimmed, usage, contextWindow, model, cwd, permissionMode, path: file };
+  // `usageSeries` is what lets the page rebuild its compaction marker after a
+  // refresh or a session switch: the live view infers it from turn-to-turn drops,
+  // and without the series there is only one number to look at (see the UI).
+  return { messages: trimmed, usage, usageSeries, contextWindow, model, cwd, permissionMode, path: file };
 }
 
 /**

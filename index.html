@@ -3536,6 +3536,9 @@
         reasoning_output_tokens: h.usage.reasoningOutputTokens,
       });
     }
+    // ...and rebuild the compaction marker from the whole series, so it survives a
+    // refresh or a session switch instead of only existing in live memory.
+    if (Array.isArray(h.usageSeries)) seedCompaction(h.usageSeries);
     status('已切换会话');
     // The composer reflects THIS session's state, not whatever was running in the
     // one we just left.
@@ -3800,7 +3803,10 @@
 
     ctxLastUsed = used;
     ctxPeakUsed = Math.max(ctxPeakUsed, used);
+    renderCtxHint(pct);
+  }
 
+  function renderCtxHint(pct){
     if (pct >= 85){
       $('ctxHint').textContent = '接近上限，压缩可能随时发生';
     } else if (compactionCount > 0){
@@ -3810,6 +3816,48 @@
     } else {
       $('ctxHint').textContent = '';
     }
+  }
+
+  /** The same inference the live meter uses, applied to one previous turn pair. */
+  function isLikelyCompaction(prev, now){
+    const MIN_PREV = Math.max(6000, ctxMax * 0.12);
+    return prev > MIN_PREV && now < prev * 0.6;
+  }
+
+  /**
+   * Rebuild the compaction marker from a session's stored usage series.
+   *
+   * Reported: "压缩标记在切换会话窗口或者刷新之后就没了". The count only lived in
+   * page memory and was inferred from turn-to-turn drops, so replaying history --
+   * which used to hand over ONE number, the last turn -- could never reproduce it.
+   * The rollout has every turn's usage, so the same rule is re-applied here.
+   *
+   * Transcript rows are not re-created: without turn positions they would land in
+   * the wrong place, which is worse than showing the summary only.
+   */
+  function seedCompaction(series){
+    if (!Array.isArray(series) || series.length < 2) return;
+    const drops = [];
+    let prev = 0, peak = 0;
+    for (const point of series){
+      const used = (point.input || 0) + (point.output || 0);
+      if (isLikelyCompaction(prev, used)) drops.push({ prev, now: used });
+      peak = Math.max(peak, used);
+      prev = used;
+    }
+    compactionCount = drops.length;
+    ctxPeakUsed = Math.max(ctxPeakUsed, peak);
+    ctxLastUsed = prev;
+    $('ctxMarks').innerHTML = '';
+    drops.forEach((d, i) => {
+      const b = document.createElement('span');
+      b.className = 'pill compact-pill';
+      b.textContent = '# ' + (i + 1) + ' 可能压缩于 ' + fmtNum(d.prev) + ' → ' + fmtNum(d.now);
+      $('ctxMarks').appendChild(b);
+    });
+    const used = prev;
+    const pct = ctxMax > 0 ? Math.min(100, (used / ctxMax) * 100) : 0;
+    renderCtxHint(pct);
   }
 
   $('btnSend').onclick = send;

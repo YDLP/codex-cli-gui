@@ -623,6 +623,7 @@ const server = http.createServer(async (req, res) => {
           threadId,
           messages: r.messages,
           usage: r.usage,
+          usageSeries: r.usageSeries,
           contextWindow: r.contextWindow,
           model: r.model,
           cwd: r.cwd,

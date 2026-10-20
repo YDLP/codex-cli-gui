@@ -17,6 +17,22 @@ test('context uses last call, excludes reasoning double count and turn totals',(
   ]);
   const saved=readConversation(id);assert.equal(saved.usage.contextTokens,280);assert.equal(saved.contextWindow,475000);assert.equal(saved.usage.cachedInputTokens,100);
 });
+test('the usage series is ordered, deduplicated, and ignores empty readings',()=>{
+  // The page rebuilds its "possible compaction" marker from this series after a
+  // refresh or a session switch, so the shape matters: one point per turn.
+  fixture([
+    {type:'token_usage_record',payload:{usage:{input_tokens:100,output_tokens:50}}},
+    {type:'event_msg',payload:{type:'token_count',info:{model_context_window:475000,last_token_usage:{input_tokens:100,output_tokens:50}}}},
+    // A zero record was seen in a real session (124 points): without filtering it
+    // reads as a 100% drop, i.e. a compaction that never happened.
+    {type:'token_usage_record',payload:{usage:{input_tokens:0,output_tokens:0}}},
+    {type:'token_usage_record',payload:{usage:{input_tokens:900,output_tokens:40}}},
+  ]);
+  const saved=readConversation(id);
+  assert.deepEqual(saved.usageSeries.map((p)=>[p.input,p.output]),[[100,50],[900,40]],
+    'consecutive duplicates collapse and all-zero points are dropped');
+  assert.equal(saved.usage.contextTokens,940,'the last reading still drives the meter');
+});
 test('history preserves message order and restores the workspace/model',()=>{
   const msg=(role,text)=>({type:'response_item',payload:{type:'message',role,content:[{type:role==='assistant'?'output_text':'input_text',text}]}});
   fixture([{type:'turn_context',payload:{cwd:temp,model:'fixture'}},msg('developer','private'),msg('user','<environment_context>env</environment_context>first'),msg('assistant','answer1'),msg('user','second'),msg('assistant','answer2')]);
