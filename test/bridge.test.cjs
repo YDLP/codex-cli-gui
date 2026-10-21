@@ -7,6 +7,7 @@ const http = require('node:http');
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'codex-gui-test-'));
 process.env.CODEX_GUI_SETTINGS_FILE=path.join(temp,'settings.json');
 process.env.CODEX_HOME=path.join(temp,'codex-home');
+process.env.CODEX_GUI_DATA_DIR=path.join(temp,'data');
 process.env.CODEX_GUI_CODEX_PATH=path.join(__dirname,'fixtures/fake-codex.cjs');
 const {server,stageAttachments,validateAttachments}=require('../bridge.cjs');
 const appserver=require('../appserver.cjs');
@@ -95,6 +96,17 @@ test('cross-origin, non-JSON, and forged Host requests are denied',async()=>{
 });
 test('oversize settings body returns an HTTP error, not a connection reset',async()=>{
   assert.equal((await post('/api/settings',{padding:'x'.repeat(2*1024*1024)})).status,413);
+});
+test('the last turn stderr is kept so a replay can show it',async()=>{
+  // stderr never reaches the rollout, so a refreshed session used to lose the CLI
+  // log entirely -- and the post-turn refresh wiped the card that had just appeared.
+  const run=await openRun('STDERR_NOISE');
+  const text=await run.done;
+  const m=text.match(/"thread_id"\s*:\s*"([0-9a-f-]{8,})"/);
+  assert.ok(m,'the stream carries the thread id');
+  const h=await (await fetch(base+'/api/history?threadId='+m[1])).json();
+  assert.match(h.cliLog||'',/Transport channel closed/,'the log must come back with the history');
+  assert.match(h.cliLog||'',/rmcp/,'and it is the cleaned text');
 });
 test('the stream announces the finished answer before the process exits',async()=>{
   // `turn.completed` is withheld until the process exits so it can carry final

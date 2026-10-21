@@ -202,6 +202,40 @@ function readBody(req, limit = 2 * 1024 * 1024) {
  * (the model can only ingest text and images natively).
  */
 const ATTACH_DIRNAME = '.codex-gui';
+/**
+ * stderr is not part of the rollout, so a replayed session had no CLI log at all
+ * -- and the automatic refresh after a turn wiped the one that was just shown.
+ * Keep the LAST turn's text per session next to the app, not in the session file.
+ */
+const CLI_LOG_DIR = path.join(
+  process.env.CODEX_GUI_DATA_DIR || path.join(HERE, '.codex-gui'),
+  'cli-logs');
+
+function cliLogPath(threadId){
+  return path.join(CLI_LOG_DIR, String(threadId).replace(/[^a-zA-Z0-9_-]/g, '_') + '.txt');
+}
+
+function saveCliLog(threadId, text){
+  if (!threadId || !text) return;
+  fs.mkdirSync(CLI_LOG_DIR, { recursive: true });
+  fs.writeFileSync(cliLogPath(threadId), text, 'utf8');
+  pruneCliLogs();
+}
+
+function readCliLog(threadId){
+  if (!threadId) return '';
+  try { return fs.readFileSync(cliLogPath(threadId), 'utf8'); } catch { return ''; }
+}
+
+/** One small file per session; keep the folder bounded anyway. */
+function pruneCliLogs(){
+  try {
+    const files = fs.readdirSync(CLI_LOG_DIR)
+      .map((f) => ({ f, m: fs.statSync(path.join(CLI_LOG_DIR, f)).mtimeMs }))
+      .sort((a, b) => b.m - a.m);
+    for (const old of files.slice(300)) fs.unlinkSync(path.join(CLI_LOG_DIR, old.f));
+  } catch { /* pruning is best effort */ }
+}
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
@@ -501,7 +535,14 @@ function startRun(opts, res) {
     }
     running.delete(runId);
     const err = cleanStderr(errBuf);
-    if (err) sse('stderr', { text: err.slice(-4000) });
+    if (err) {
+      // stderr is not part of the rollout, so a replay (or the automatic refresh
+      // after a turn) had nothing to show -- the log vanished exactly when it was
+      // useful. Keep the last turn's text per session on disk instead.
+      const text = err.slice(-4000);
+      try { saveCliLog(run.threadId, text); } catch { /* logging must never fail a turn */ }
+      sse('stderr', { text });
+    }
     sse('exit', { code, signal, stopped: run.stopped });
     try { res.end(); } catch {}
   };
@@ -624,6 +665,9 @@ const server = http.createServer(async (req, res) => {
           messages: r.messages,
           usage: r.usage,
           usageSeries: r.usageSeries,
+          // Not in the rollout: read back the last turn's stderr transcript so the
+          // folded log card survives a reload and the post-turn refresh.
+          cliLog: readCliLog(threadId),
           contextWindow: r.contextWindow,
           model: r.model,
           cwd: r.cwd,

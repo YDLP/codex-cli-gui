@@ -150,6 +150,9 @@ async function main(){
           // The stored per-turn series, so the compaction marker can be rebuilt on
           // replay instead of only existing in live memory.
           usageSeries:t.usageSeries||[{input:900,output:100},{input:1200,output:120}],
+          // stderr kept by the bridge for the last turn, so a replay can rebuild the
+          // folded log card instead of losing it.
+          cliLog:t.cliLog||'',
           messages:t.manyMessages||messages};
         if(t.deferHistory)return new Promise(resolve=>{t.resolvers[id]=()=>resolve(response(result));});
         return response(result);
@@ -809,6 +812,36 @@ async function main(){
     await sleep(200);
     assert.equal(await evaluate("document.querySelectorAll('#log details.cli-log .cli-log-line').length"),8,
       'the lines are visible once opened');
+  });
+  await check('a replayed session rebuilds the CLI log card',async()=>{
+    // stderr is not in the rollout: without the bridge keeping it, a refresh (or
+    // the post-turn rebuild) dropped the card entirely.
+    await evaluate("__test.cliLog='2026-10-21 09:00:00 ERROR first line\\n2026-10-21 09:00:01 ERROR second line'");
+    await evaluate("$test('btnNew').click();$test('btnClear').click()");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('btnRefreshSessions').click()");
+    await waitUI("document.querySelectorAll('#sessionList .sess').length >= 1",8000);
+    await evaluate("document.querySelectorAll('#sessionList .sess')[0].click()");
+    await waitUI("$test('status').textContent === '已切换会话'",8000);
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      cards: document.querySelectorAll('#log details.cli-log').length,
+      open: (document.querySelector('#log details.cli-log')||{}).open,
+      lines: document.querySelectorAll('#log details.cli-log .cli-log-line').length,
+      count: (document.querySelector('#log details.cli-log .grp-count')||{}).textContent||''
+    })`));
+    console.log('       replayed log card:', JSON.stringify(st));
+    assert.equal(st.cards,1,'the stored stderr becomes one card again: '+JSON.stringify(st));
+    assert.equal(st.open,false,'still folded: '+JSON.stringify(st));
+    assert.equal(st.lines,2,'both lines are there: '+JSON.stringify(st));
+    assert.match(st.count,/2 行/,'and counted: '+JSON.stringify(st));
+    await evaluate("delete __test.cliLog");
+    // Leave a fresh session behind: the stub sessions have no rollout on disk, and
+    // the next check would otherwise try to resume one and be refused.
+    await evaluate("$test('btnNew').click()");
+    // Switching to a stub session also adopted ITS working directory; later checks
+    // create real sessions and expect the fixture one.
+    await evaluate('$test(\'cwd\').value=' + JSON.stringify(temp));
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
   });
   await check('a brand-new session shows up while its first turn runs',async()=>{
     // Reported: "新会话第一轮结束前，左边会话列表不显示，也不会转圈". The row only

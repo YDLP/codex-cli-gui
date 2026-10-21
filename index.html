@@ -3736,6 +3736,10 @@
     stopToolGroup();
     stopFileGroup();
     stopCliLog();
+    // The log is persisted per session (stderr is not in the rollout), so the card
+    // comes back after a reload or the post-turn refresh instead of vanishing.
+    if (h.cliLog) addCliLog(h.cliLog);
+    stopCliLog();
     // One bubble per assistant message; close it before the footer note.
     resetAgentRow();
     if (footer) addMeta('—— 以上为历史记录（共 ' + msgs.length + ' 条），继续发消息即可接着聊 ——');
