@@ -713,6 +713,45 @@ async function main(){
     assert.equal(await evaluate("getComputedStyle($test('busyBadge')).color"),'rgb(63, 185, 80)',
       'idle keeps its green, so "ready to send" still reads at a glance');
   });
+  await check('a finished command never reads as still running',async()=>{
+    // Reported: the group header said "1 条失败" while the card inside said 执行中,
+    // and a refresh changed that card to exit 1. The CLI had sent the exit code
+    // without `status: 'completed'`; the label keyed off status, the header off the
+    // exit code, so the row contradicted itself.
+    await evaluate("$test('btnNew').click();__test.failRun=false;__test.failCheck=false");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='EXIT_NO_STATUS';$test('btnSend').click()");
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",10000);
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      label:(document.querySelector('#log details.cmd-group details.cmd summary .pill')||{}).textContent||'',
+      head:(document.querySelector('#log details.cmd-group > summary')||{}).textContent||'',
+      exit:document.querySelector('#log details.cmd-group details.cmd').dataset.exit
+    })`));
+    console.log('       exit without status:', JSON.stringify(st));
+    assert.equal(st.label,'exit 1','the label must follow the exit code: '+JSON.stringify(st));
+    assert.equal(st.exit,'1','and so must the dataset: '+JSON.stringify(st));
+    assert.match(st.head,/1 条失败/,'the header agrees with the card: '+JSON.stringify(st));
+    assert.doesNotMatch(st.head,/执行中/,'nothing claims to be running afterwards: '+JSON.stringify(st));
+  });
+  await check('stopping a turn marks its unfinished command as interrupted',async()=>{
+    await evaluate("$test('btnNew').click()");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='CMD_HANG';$test('btnSend').click()");
+    await waitUI("document.querySelector('#log details.cmd-group details.cmd') !== null",8000);
+    assert.equal(await evaluate("(document.querySelector('#log details.cmd-group details.cmd summary .pill')||{}).textContent"),
+      '执行中','it starts as running');
+    await evaluate("$test('btnStop').click()");
+    await waitUI("$test('status').textContent === '已停止'",10000);
+    await sleep(300);
+    const after=JSON.parse(await evaluate(`JSON.stringify({
+      label:(document.querySelector('#log details.cmd-group details.cmd summary .pill')||{}).textContent||'',
+      head:(document.querySelector('#log details.cmd-group > summary')||{}).textContent||''
+    })`));
+    console.log('       after stop:', JSON.stringify(after));
+    assert.equal(after.label,'已中断','the card must stop claiming to run: '+JSON.stringify(after));
+    assert.match(after.head,/1 条中断/,'the header counts it as interrupted: '+JSON.stringify(after));
+    assert.doesNotMatch(after.head,/条失败/,'an interrupted command is not a failure: '+JSON.stringify(after));
+  });
   await check('a brand-new session shows up while its first turn runs',async()=>{
     // Reported: "新会话第一轮结束前，左边会话列表不显示，也不会转圈". The row only
     // appeared when the list reloaded AFTER the turn, so the first turn ran

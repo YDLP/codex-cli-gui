@@ -55,6 +55,27 @@ if (args[0] === 'app-server') {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       return;
     }
+    // A command whose completion carries an exit code but NO `status` field --
+    // exactly the shape that made a finished row still read 执行中 while the group
+    // header counted it as failed.
+    if (prompt.startsWith('EXIT_NO_STATUS')) {
+      emit({ type:'item.started', item:{ id:'cmd-x', type:'command_execution',
+        command:'"C:\\\\Windows\\\\System32\\\\cmd.exe" /d /c exit 1', status:'in_progress' } });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      emit({ type:'item.completed', item:{ id:'cmd-x', type:'command_execution',
+        command:'"C:\\\\Windows\\\\System32\\\\cmd.exe" /d /c exit 1', exit_code:1,
+        aggregated_output:'boom' } });
+      emit({ type:'item.completed', item:{ type:'agent_message', text:'done' } });
+      emit({ type:'turn.completed', usage:{input_tokens:800,output_tokens:20,reasoning_output_tokens:0,cached_input_tokens:0} });
+      return;
+    }
+    // A command that never finishes, so stopping the turn leaves a card in flight.
+    if (prompt.startsWith('CMD_HANG')) {
+      emit({ type:'item.started', item:{ id:'cmd-w', type:'command_execution',
+        command:'"C:\\\\Windows\\\\System32\\\\cmd.exe" /d /c ping -n 60 127.0.0.1', status:'in_progress' } });
+      setInterval(() => {}, 1000);
+      return;
+    }
     const big = prompt.startsWith('BIG');
     // THREE deliberately LONG commands, so two things can be checked for real:
     //   1. a long command left in <summary> kept the card wide open when folded;

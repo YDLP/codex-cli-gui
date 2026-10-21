@@ -88,6 +88,10 @@ const read = (p) => new Promise((res, rej) => {
     ['it only shows when there is something below', /function updateScrollBottom/],
     // In-session search starts near the viewport, not at the top of the session.
     ['search starts from the nearest hit', /function tsNearestIndex/],
+    // A command's label and the group header must agree, and nothing may stay
+    // "执行中" after the turn ends.
+    ['an exit code alone means finished', /function isCmdFinished/],
+    ['unfinished commands become interrupted', /function markInterruptedCommands/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

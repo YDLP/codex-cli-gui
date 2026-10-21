@@ -2313,16 +2313,51 @@
     const count = g.querySelector('.grp-count');
     const state = g.querySelector('.grp-state');
     const cards = toolGroupBox.querySelectorAll('details.cmd');
-    let done = 0, failed = 0;
+    let done = 0, failed = 0, interrupted = 0, running = 0;
     for (const d of cards){
       const e = d.dataset.exit;
-      if (e === '') continue;
-      if (e === '0') done++; else failed++;
+      // `undefined` (never completed) and '' (started) both mean "not finished".
+      // Testing only for '' counted an unfinished card as a failure, which is why
+      // the header said "1 条失败" while the card inside still said 执行中.
+      if (e === undefined || e === '') running++;
+      else if (e === 'interrupted') interrupted++;
+      else if (e === '0') done++;
+      else failed++;
     }
     count.textContent = toolGroupCount + ' 条';
-    if (failed) state.innerHTML = '<span class="pill bad">' + failed + ' 条失败</span>';
-    else if (done === toolGroupCount && toolGroupCount) state.innerHTML = '<span class="pill ok">全部成功</span>';
-    else state.innerHTML = '<span class="pill">执行中</span>';
+    const parts = [];
+    if (failed) parts.push('<span class="pill bad">' + failed + ' 条失败</span>');
+    if (interrupted) parts.push('<span class="pill">' + interrupted + ' 条中断</span>');
+    if (!parts.length){
+      if (running) parts.push('<span class="pill">执行中</span>');
+      else if (done === toolGroupCount && toolGroupCount) parts.push('<span class="pill ok">全部成功</span>');
+    }
+    state.innerHTML = parts.join(' ');
+  }
+
+  /**
+   * Is this command item finished?
+   *
+   * The CLI can send an exit code without `status: 'completed'`; keying the label
+   * off `status` alone made a finished row read 执行中 while the group counted it
+   * as failed. One source of truth: an exit code means finished.
+   */
+  function isCmdFinished(item){
+    return item.status === 'completed' || item.exit_code != null;
+  }
+
+  /** After a turn ends, nothing may still claim to be running. */
+  function markInterruptedCommands(){
+    if (!toolGroupBox) return;
+    let changed = false;
+    for (const d of toolGroupBox.querySelectorAll('details.cmd')){
+      if (d.dataset.exit !== '') continue;
+      d.dataset.exit = 'interrupted';
+      const pill = d.querySelector('summary .pill');
+      if (pill){ pill.className = 'pill'; pill.textContent = '已中断'; }
+      changed = true;
+    }
+    if (changed && toolGroup && toolGroup.isConnected) refreshToolGroupHeader();
   }
 
   /** One command row inside the group card. */
@@ -2330,7 +2365,8 @@
     const d = document.createElement('details');
     d.className = 'cmd';
     const s = document.createElement('summary');
-    const st = item.status === 'completed'
+    const finished = isCmdFinished(item);
+    const st = finished
       ? (item.exit_code === 0 ? '<span class="pill ok">exit 0</span>'
         : item.exit_code == null ? '<span class="pill">完成</span>'
         : '<span class="pill bad">exit ' + item.exit_code + '</span>')
@@ -2599,7 +2635,7 @@
         // the command being executed is visible without expanding the stack.
         // A group the user opened themselves simply stays open: nothing here
         // closes it.
-        programmaticOpen(d, item.status !== 'completed');
+        programmaticOpen(d, !isCmdFinished(item));
       }
     }
     if (item.id) commandCards.set(item.id, d);
@@ -3249,6 +3285,9 @@
         // "working" row, which would make the card look non-empty to a later check.
         dropAgentRowIfEmpty();
         showThinking(false);
+        // The turn is over, so nothing may still read 执行中: a command whose
+        // completion never arrived (stopped, crashed, or cut off) is interrupted.
+        markInterruptedCommands();
         // Also fold on the failure/abort paths, so a crashed run does not leave
         // every card hanging open.
         collapseToolCards();
