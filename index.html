@@ -400,6 +400,30 @@
   }
   /* A file change is nested in its own group; its name reads like a tool's. */
   details.filechg > summary .cmd-peek{color:var(--fg)}
+  /* ---- CLI log card (stderr) -------------------------------------------- */
+  details.cli-log{
+    border:1px solid var(--line); border-radius:8px; background:var(--panel);
+    margin-top:8px; overflow:hidden;
+  }
+  details.cli-log > summary{
+    cursor:pointer; padding:7px 12px; font-size:12.5px; color:var(--dim);
+    display:flex; align-items:center; gap:8px; user-select:none;
+  }
+  details.cli-log > summary:hover{background:var(--panel2)}
+  details.cli-log > summary::after{
+    content:'▸'; margin-left:auto; color:var(--dim); font-size:11px;
+    transition:transform .18s cubic-bezier(.22,.61,.36,1);
+  }
+  details.cli-log[open] > summary::after{transform:rotate(90deg)}
+  details.cli-log > summary .cmd-peek{color:var(--dim); opacity:.8}
+  .cli-log-body{
+    max-height:280px; overflow:auto; padding:8px 12px;
+    border-top:1px solid var(--line); background:var(--code);
+  }
+  .cli-log-line{
+    font:11.5px/1.55 "Cascadia Mono",Consolas,monospace;
+    color:var(--dim); white-space:pre-wrap; word-break:break-word;
+  }
   /* Unified diff. Structural characters live in the text; only colour is CSS. */
   pre.diff{padding:6px 0; background:var(--code); overflow-x:auto}
   pre.diff .dl{
@@ -1283,6 +1307,7 @@
     dropAgentRowIfEmpty();
     stopToolGroup();
     stopFileGroup();
+    stopCliLog();
     currentThinking = null;
   }
 
@@ -1309,6 +1334,7 @@
     resetAgentRow();
     stopToolGroup();
     stopFileGroup();
+    stopCliLog();
     clearTurnCards();
     turnCounter++;
     // Divider FIRST, then the prompt: the label opens the exchange it belongs to.
@@ -2215,6 +2241,58 @@
 
   function stopFileGroup(){
     fileGroup = null; fileGroupBox = null; fileGroupCount = 0;
+  }
+
+  // ------------------------------------------------------------- CLI log card
+  // stderr used to be printed as plain meta text, so a burst of transport retries
+  // ("Transport channel closed...") painted a wall of lines at the end of the turn.
+  // One folded card per turn instead, with a line count and the last line as peek.
+  let cliLogCard = null;
+  let cliLogBody = null;
+  let cliLogLines = 0;
+  let cliLogTruncated = false;
+  const CLI_LOG_MAX_LINES = 300;
+
+  function stopCliLog(){
+    cliLogCard = null; cliLogBody = null; cliLogLines = 0; cliLogTruncated = false;
+  }
+
+  function addCliLog(text){
+    const lines = String(text || '').split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l);
+    if (!lines.length) return;
+    if (!cliLogCard || !cliLogCard.isConnected){
+      cliLogCard = document.createElement('details');
+      cliLogCard.className = 'cli-log';
+      const s = document.createElement('summary');
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = 'CLI 日志';
+      const count = document.createElement('span');
+      count.className = 'grp-count';
+      const peek = document.createElement('span');
+      peek.className = 'cmd-peek';
+      s.appendChild(pill); s.appendChild(count); s.appendChild(peek);
+      cliLogCard.appendChild(s);
+      cliLogBody = document.createElement('div');
+      cliLogBody.className = 'cli-log-body';
+      cliLogCard.appendChild(cliLogBody);
+      // Folded: this is diagnostic noise, not the answer.
+      programmaticOpen(cliLogCard, false);
+      row('agent', '', cliLogCard);
+      cliLogLines = 0;
+      cliLogTruncated = false;
+    }
+    for (const line of lines){
+      if (cliLogLines >= CLI_LOG_MAX_LINES){ cliLogTruncated = true; break; }
+      const d = document.createElement('div');
+      d.className = 'cli-log-line';
+      d.textContent = line;
+      cliLogBody.appendChild(d);
+      cliLogLines++;
+    }
+    cliLogCard.querySelector('.grp-count').textContent =
+      cliLogLines + ' 行' + (cliLogTruncated ? '（已截断）' : '');
+    cliLogCard.querySelector('.cmd-peek').textContent = lines[lines.length - 1].slice(0, 120);
   }
 
   /**
@@ -3240,7 +3318,7 @@
             status('运行中 · ' + (data.cwd || ''));
           }
           else if (name === 'text'){ if (visible()){ showThinking(false); addMeta(data.line); } }
-          else if (name === 'stderr'){ if (visible()) addMeta('CLI 日志：\n' + data.text); }
+          else if (name === 'stderr'){ if (visible()) addCliLog(data.text); }
           else if (name === 'fatal'){ run.failed = true; if (visible()){ runFailed = true; showThinking(false); addError(data.message); } }
           else if (name === 'exit'){
             sawExit = true;
@@ -3622,6 +3700,7 @@
       }
       stopToolGroup();
       stopFileGroup();
+      stopCliLog();
       // One bubble per assistant message; close it before the footer note.
       resetAgentRow();
       addMeta('—— 以上为历史记录（共 ' + msgs.length + ' 条），继续发消息即可接着聊 ——');

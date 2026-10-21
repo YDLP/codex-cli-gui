@@ -92,6 +92,8 @@ const read = (p) => new Promise((res, rej) => {
     // "执行中" after the turn ends.
     ['an exit code alone means finished', /function isCmdFinished/],
     ['unfinished commands become interrupted', /function markInterruptedCommands/],
+    // stderr is diagnostic noise: one folded card, not a wall of meta text.
+    ['CLI stderr folds into its own card', /function addCliLog/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

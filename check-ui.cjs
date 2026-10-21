@@ -752,6 +752,36 @@ async function main(){
     assert.match(after.head,/1 条中断/,'the header counts it as interrupted: '+JSON.stringify(after));
     assert.doesNotMatch(after.head,/条失败/,'an interrupted command is not a failure: '+JSON.stringify(after));
   });
+  await check('CLI stderr collapses into one folded log card',async()=>{
+    // Reported with a screenshot of eight rmcp transport errors spilled under the
+    // reply: "这个日志能折叠一下吗，怎么弹这么多".
+    await evaluate("$test('btnNew').click();__test.failRun=false;__test.failCheck=false");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='STDERR_NOISE';$test('btnSend').click()");
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",12000);
+    await sleep(300);
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      cards: document.querySelectorAll('#log details.cli-log').length,
+      open: (document.querySelector('#log details.cli-log')||{}).open,
+      lines: document.querySelectorAll('#log details.cli-log .cli-log-line').length,
+      count: (document.querySelector('#log details.cli-log .grp-count')||{}).textContent||'',
+      peek: (document.querySelector('#log details.cli-log .cmd-peek')||{}).textContent||'',
+      metaLeak: (document.getElementById('log').textContent.match(/CLI 日志：/g)||[]).length
+    })`));
+    console.log('       cli log card:', JSON.stringify(st));
+    assert.equal(st.cards,1,'all stderr goes into ONE card: '+JSON.stringify(st));
+    assert.equal(st.open,false,'the card starts folded: '+JSON.stringify(st));
+    assert.equal(st.lines,8,'every line is kept inside it: '+JSON.stringify(st));
+    assert.match(st.count,/8 行/,'the summary counts the lines: '+JSON.stringify(st));
+    assert.match(st.peek,/Transport channel closed/,'and previews the last one: '+JSON.stringify(st));
+    assert.equal(st.metaLeak,0,'stderr must not be dumped as plain meta text: '+JSON.stringify(st));
+
+    // Opening it shows the lines.
+    await evaluate("document.querySelector('#log details.cli-log').open = true");
+    await sleep(200);
+    assert.equal(await evaluate("document.querySelectorAll('#log details.cli-log .cli-log-line').length"),8,
+      'the lines are visible once opened');
+  });
   await check('a brand-new session shows up while its first turn runs',async()=>{
     // Reported: "新会话第一轮结束前，左边会话列表不显示，也不会转圈". The row only
     // appeared when the list reloaded AFTER the turn, so the first turn ran

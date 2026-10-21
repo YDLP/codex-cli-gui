@@ -76,6 +76,16 @@ if (args[0] === 'app-server') {
       setInterval(() => {}, 1000);
       return;
     }
+    // A burst of stderr, like the rmcp transport retries. It used to be painted
+    // as a wall of plain meta text at the end of the turn.
+    if (prompt.startsWith('STDERR_NOISE')) {
+      for (let i = 0; i < 8; i++) {
+        process.stderr.write('2026-10-21T07:49:0' + i + 'Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed\n');
+      }
+      emit({ type:'item.completed', item:{ type:'agent_message', text:'日志已产生。' } });
+      emit({ type:'turn.completed', usage:{input_tokens:700,output_tokens:10,reasoning_output_tokens:0,cached_input_tokens:0} });
+      return;
+    }
     const big = prompt.startsWith('BIG');
     // THREE deliberately LONG commands, so two things can be checked for real:
     //   1. a long command left in <summary> kept the card wide open when folded;
