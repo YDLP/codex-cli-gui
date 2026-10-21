@@ -125,6 +125,7 @@ async function main(){
         return response({sessions:t.sessions});
       }
       if(String(url).startsWith('/api/history?')){
+        t.historyCalls=(t.historyCalls||0)+1;
         // 「realHistory」lets a check exercise the ACTUAL rollout reader instead of
         // this stub -- without it the on-disk replay path is never tested.
         if(t.realHistory)return nativeFetch(url,options);
@@ -751,6 +752,33 @@ async function main(){
     assert.equal(after.label,'已中断','the card must stop claiming to run: '+JSON.stringify(after));
     assert.match(after.head,/1 条中断/,'the header counts it as interrupted: '+JSON.stringify(after));
     assert.doesNotMatch(after.head,/条失败/,'an interrupted command is not a failure: '+JSON.stringify(after));
+  });
+  await check('a finished turn is re-rendered from disk, silently, once',async()=>{
+    // Requested as "会话结束之后是不是加个刷新好一点？不然有时候布局很奇怪".
+    // Uses the REAL rollout reader: the stub history would not match what is on
+    // screen, and the refresh deliberately refuses to replace a feed the file does
+    // not agree with.
+    await evaluate("$test('btnNew').click();__test.failRun=false;__test.failCheck=false;__test.realHistory=true");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    const before=Number(await evaluate("__test.historyCalls||0"));
+    await evaluate("$test('prompt').value='replay me';$test('btnSend').click()");
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",15000);
+    await sleep(1200);
+    const after=Number(await evaluate("__test.historyCalls||0"));
+    console.log('       history reloads: ' + before + ' -> ' + after);
+    assert.ok(after > before,'a finished turn must reload the transcript once: '+before+' -> '+after);
+
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      footers: (document.getElementById('log').textContent.match(/以上为历史记录/g)||[]).length,
+      hasAnswer: /收到后通知 CPU/.test(document.getElementById('log').textContent),
+      dots: document.querySelectorAll('#jumpRail .jump-dot').length,
+      bubbles: document.querySelectorAll('#log .bubble').length
+    })`));
+    console.log('       after the silent refresh:', JSON.stringify(st));
+    assert.equal(st.footers,0,'the refresh must not add the switch banner: '+JSON.stringify(st));
+    assert.equal(st.hasAnswer,true,'the answer survives the rebuild: '+JSON.stringify(st));
+    assert.ok(st.dots >= 1,'the jump rail is rebuilt too: '+JSON.stringify(st));
+    await evaluate("__test.realHistory=false");
   });
   await check('CLI stderr collapses into one folded log card',async()=>{
     // Reported with a screenshot of eight rmcp transport errors spilled under the

@@ -3374,6 +3374,9 @@
       // A session that finished in the background is now on disk; if the user is
       // looking at it, reload so the completed turn appears instead of a half one.
       if (run.detached && threadId === run.sessionKey) refreshHistoryIfIdle();
+      // A finished turn is rebuilt from the canonical copy: live rendering and a
+      // replay can disagree about layout, which is what "布局很奇怪" was.
+      if (wasVisible && exitOk && !run.stopRequested) reloadTranscriptAfterTurn();
       setBusy(!!activeRun());
       renderRecent();
       renderSessions();
@@ -3675,36 +3678,7 @@
     resolveCtxMax();
 
     if (h.error) addError('读取历史出错：' + h.error);
-    const msgs = h.messages || [];
-    if (!msgs.length){
-      addMeta(h.found
-        ? '这个会话没有可回放的对话内容。'
-        : '找不到该会话的记录文件（可能已被删除）。');
-    } else {
-      let previousRole = '';
-      for (const m of msgs){
-        // Commands and reasoning are replayed through the SAME helpers the live
-        // stream uses, so a refreshed session looks identical to what the user
-        // just watched -- including the grouped, collapsed command card.
-        if (m.kind === 'command' && m.item){ addCmd({ ...m.item, status: 'completed' }, true); continue; }
-        if (m.kind === 'file_change' && m.item){ addFileChange({ ...m.item, status: 'completed' }, true); continue; }
-        if (m.kind === 'web_search' && m.item){ addWebSearch(m.item, true); continue; }
-        if (m.kind === 'reasoning' && m.item){ addReasoning(m.item); continue; }
-        if (m.role === 'user'){ addUser(m.text, m.attachments); previousRole = 'user'; }
-        else {
-          // A new card only when the turn starts; consecutive assistant messages
-          // from the same prompt stay in one card.
-          addAgent(m.text, previousRole === 'user');
-          previousRole = 'assistant';
-        }
-      }
-      stopToolGroup();
-      stopFileGroup();
-      stopCliLog();
-      // One bubble per assistant message; close it before the footer note.
-      resetAgentRow();
-      addMeta('—— 以上为历史记录（共 ' + msgs.length + ' 条），继续发消息即可接着聊 ——');
-    }
+    renderHistoryMessages(h, { footer: true });
     rebuildJumpRail();
 
     // Restore the meter from Codex's own numbers for the last turn.
@@ -3724,6 +3698,117 @@
     // The composer reflects THIS session's state, not whatever was running in the
     // one we just left.
     setBusy(!!activeRun());
+  }
+
+  /**
+   * Replay a history payload into the feed.
+   *
+   * Shared by the session switch and the automatic refresh that runs at the end of
+   * a turn, so both produce exactly the same DOM -- which is the whole point of the
+   * refresh: live rendering occasionally ended up laid out differently from the
+   * replayed version.
+   */
+  function renderHistoryMessages(h, { footer = true } = {}){
+    const msgs = h.messages || [];
+    if (!msgs.length){
+      addMeta(h.found
+        ? '这个会话没有可回放的对话内容。'
+        : '找不到该会话的记录文件（可能已被删除）。');
+      return;
+    }
+    let previousRole = '';
+    for (const m of msgs){
+      // Commands and reasoning are replayed through the SAME helpers the live
+      // stream uses, so a refreshed session looks identical to what the user
+      // just watched -- including the grouped, collapsed command card.
+      if (m.kind === 'command' && m.item){ addCmd({ ...m.item, status: 'completed' }, true); continue; }
+      if (m.kind === 'file_change' && m.item){ addFileChange({ ...m.item, status: 'completed' }, true); continue; }
+      if (m.kind === 'web_search' && m.item){ addWebSearch(m.item, true); continue; }
+      if (m.kind === 'reasoning' && m.item){ addReasoning(m.item); continue; }
+      if (m.role === 'user'){ addUser(m.text, m.attachments); previousRole = 'user'; }
+      else {
+        // A new card only when the turn starts; consecutive assistant messages
+        // from the same prompt stay in one card.
+        addAgent(m.text, previousRole === 'user');
+        previousRole = 'assistant';
+      }
+    }
+    stopToolGroup();
+    stopFileGroup();
+    stopCliLog();
+    // One bubble per assistant message; close it before the footer note.
+    resetAgentRow();
+    if (footer) addMeta('—— 以上为历史记录（共 ' + msgs.length + ' 条），继续发消息即可接着聊 ——');
+  }
+
+  /**
+   * Re-render the current session from disk, once, after its turn finished.
+   *
+   * Requested as "会话结束之后是不是加个刷新好一点？不然有时候布局很奇怪".
+   * Live events and a replay can disagree about layout (folded groups, upgraded
+   * file cards), so the feed is rebuilt from the canonical copy. Deliberately
+   * quiet: no meta line, no session switch, composer and attachments untouched,
+   * and the reading position is preserved.
+   */
+  async function reloadTranscriptAfterTurn(){
+    if (!threadId || historyLoading) return;
+    const requestId = ++historyRequest;
+    historyLoading = true; updateSendState();
+    const wasSearching = !$('tsSearch').hidden && tsQuery;
+    try {
+      const h = await (await fetch('/api/history?threadId=' + encodeURIComponent(threadId))).json();
+      if (requestId !== historyRequest) return;
+      if (h.error || !Array.isArray(h.messages) || !h.messages.length) return;
+      // Only replace the feed when the file agrees with the screen. If the rollout
+      // has not been flushed yet (or answers a different session), replaying it
+      // would REPLACE the answer the user is reading with something older.
+      if (!lastAnswerMatches(h.messages)) return;
+      // Where was the reader? Measured before the DOM is replaced.
+      const gap = log.scrollHeight - log.scrollTop - log.clientHeight;
+      const stickToBottom = gap < 220;
+      log.innerHTML = '';
+      resetTurnView();
+      turnCounter = 0;
+      resetThreadTracking();
+      renderHistoryMessages(h, { footer: false });
+      rebuildJumpRail();
+      if (h.usage){
+        updateCtx({
+          input_tokens: h.usage.inputTokens,
+          cached_input_tokens: h.usage.cachedInputTokens,
+          output_tokens: h.usage.outputTokens,
+          reasoning_output_tokens: h.usage.reasoningOutputTokens,
+        });
+      }
+      if (Array.isArray(h.usageSeries)) seedCompaction(h.usageSeries);
+      if (stickToBottom) scrollDown();
+      else log.scrollTop = Math.max(0, log.scrollHeight - log.clientHeight - gap);
+      if (wasSearching) tsRunSearch(tsQuery);
+      updateScrollBottom();
+    } catch { /* a failed refresh must leave the live feed alone */ }
+    finally {
+      if (requestId === historyRequest){ historyLoading = false; updateSendState(); }
+    }
+  }
+
+  /**
+   * Does the replayed last answer say the same thing as the one on screen?
+   *
+   * Compared on a normalized prefix: the point is only to prove both describe the
+   * same turn, not to diff them.
+   */
+  function lastAnswerMatches(messages){
+    const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    const bubbles = [...log.querySelectorAll('#log .bubble')].filter((b) => !b.closest('.row.user'));
+    const onScreen = norm(bubbles.length ? bubbles[bubbles.length - 1].textContent : '');
+    if (!onScreen) return false;
+    let onDisk = '';
+    for (let i = messages.length - 1; i >= 0; i--){
+      const m = messages[i];
+      if (m && m.role === 'assistant' && !m.kind && m.text){ onDisk = norm(m.text); break; }
+    }
+    if (!onDisk) return false;
+    return onScreen === onDisk || onScreen.startsWith(onDisk) || onDisk.startsWith(onScreen);
   }
 
   /** Reload the visible transcript if this session has nothing running. */

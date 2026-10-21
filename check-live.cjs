@@ -94,6 +94,9 @@ const read = (p) => new Promise((res, rej) => {
     ['unfinished commands become interrupted', /function markInterruptedCommands/],
     // stderr is diagnostic noise: one folded card, not a wall of meta text.
     ['CLI stderr folds into its own card', /function addCliLog/],
+    // A finished turn is rebuilt from disk, but only when the file agrees.
+    ['a finished turn re-renders from disk', /function reloadTranscriptAfterTurn/],
+    ['that refresh refuses to replace a mismatched feed', /function lastAnswerMatches/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {
