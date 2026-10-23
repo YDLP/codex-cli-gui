@@ -263,9 +263,16 @@ async function main(){
     // keep what it already showed.
     await evaluate("__test.sessions=[]");
     await evaluate("$test('btnRefreshSessions').click()");
-    await sleep(200);
+    await sleep(250);
     assert.equal(await evaluate("document.querySelectorAll('.sess').length"),2,
       'an empty reply must not clear the list: '+await evaluate("$test('sessionList').textContent.slice(0,60)"));
+    // It must take the INTENDED branch. The old code referenced an undefined
+    // `force`, threw, and kept the list only because the catch happened to leave
+    // it alone -- the assertion above passed while the feature was broken.
+    assert.match(await evaluate("$test('log').textContent"),/会话列表暂时为空，保留上次的结果/,
+      'the guard must run, not the error path');
+    assert.doesNotMatch(await evaluate("$test('log').textContent"),/会话列表加载失败/,
+      'and it must not report an error');
     // Restore the fixture and let the list come back normally.
     await evaluate(`__test.sessions=${JSON.stringify([
       {id:a,title:'Session A',cwd:workspaceA},{id:b,title:'Session B',cwd:workspaceB}])}`);

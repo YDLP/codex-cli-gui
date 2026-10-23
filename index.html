@@ -3667,8 +3667,10 @@
       // An empty reply must not wipe a list we already have. The session reader
       // can come back empty for transient reasons (app-server restart, not yet
       // ready), and replacing the sidebar with "还没有会话" reads as "all your
-      // conversations are gone" -- alarming and wrong.
-      if (!next.length && sessions.length && !force){
+      // conversations are gone" -- alarming and wrong. (`force` used to be
+      // referenced here without ever being defined, so this branch threw and the
+      // sidebar was preserved by accident, via the catch below.)
+      if (!next.length && sessions.length){
         addMeta('会话列表暂时为空，保留上次的结果。');
         return;
       }
