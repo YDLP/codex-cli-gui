@@ -97,6 +97,16 @@ test('cross-origin, non-JSON, and forged Host requests are denied',async()=>{
 test('oversize settings body returns an HTTP error, not a connection reset',async()=>{
   assert.equal((await post('/api/settings',{padding:'x'.repeat(2*1024*1024)})).status,413);
 });
+test('a spurious capacity error is retried without bothering the user',async()=>{
+  // Codex sometimes reports "Selected model is at capacity" when nothing is
+  // limited. One silent retry is cheaper than making the user press send again.
+  const run=await openRun('FLAKY_CAPACITY');
+  const text=await run.done;
+  assert.match(text,/event: retry/,'the page must be told a retry is happening');
+  assert.match(text,/CAPACITY_OK/,'the second attempt must carry the answer');
+  const exits=text.split('event: exit').length-1;
+  assert.equal(exits,1,'the failed attempt must not emit its own exit');
+});
 test('the last turn stderr is kept so a replay can show it',async()=>{
   // stderr never reaches the rollout, so a refreshed session used to lose the CLI
   // log entirely -- and the post-turn refresh wiped the card that had just appeared.

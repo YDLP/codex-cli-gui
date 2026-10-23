@@ -426,33 +426,26 @@ function startRun(opts, res) {
     transport: 'shell-free-stdin',
   });
 
-  let child;
-  try {
-    // No `cmd /c` here: it rewrites arguments containing newlines and silently
-    // drops a trailing `-i <image>`. See resolveCodexExe().
-    child = spawnCodex(args, {
-      cwd: opts.cwd,
-      env,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-  } catch (e) {
-    sse('fatal', { message: 'failed to start codex: ' + e.message });
-    res.end();
-    return runId;
-  }
-
-  const run = { child, threadId: opts.resumeThreadId, stopped: false };
+  const run = { child: null, threadId: opts.resumeThreadId, stopped: false };
   running.set(runId, run);
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdin.on('error', () => {}); // EPIPE is reported by the child exit/stderr
-  child.stdin.end(finalPrompt);
   const heartbeat = setInterval(() => { if (!res.destroyed && !res.writableEnded) res.write(': heartbeat\n\n'); }, 15000);
   heartbeat.unref();
 
-  let buf = '';
-  let completedTurn = null;
+  /**
+   * `codex exec` occasionally reports a spurious upstream error -- most often
+   * "Selected model is at capacity. Please try a different model." when nothing is
+   * actually limited (reported as "这个提示限额，其实没有限额"). Those are worth one
+   * more attempt; a real failure is not.
+   */
+  const MAX_RETRIES = 2;
+  const RETRY_DELAYS = [800, 2000];
+  let attempt = 0;
+  const isTransientFailure = (text) =>
+    /at capacity|overloaded|temporarily unavailable|try a different model|please retry|502|503/i.test(String(text || ''));
+
+  /** Per attempt: a retry starts from a clean slate, never from the failed text. */
+  let state = { buf: '', errBuf: '', completedTurn: null, failure: '', finished: false };
+
   const handleLine = (line) => {
     const t = line.trim();
     if (!t) return;
@@ -466,9 +459,15 @@ function startRun(opts, res) {
           // needs to know the ANSWER is done NOW: `codex exec` then spends
           // seconds flushing the rollout and poking plugin catalogs, and the UI
           // used to spin through all of it (reported as ~10s of extra spinner).
-          completedTurn = event;
+          state.completedTurn = event;
           sse('answer_done', { at: Date.now() });
           return;
+        }
+        if (event.type === 'turn.failed') {
+          const msg = String(event.error?.message || '');
+          state.failure = msg;
+          // A blip we are about to retry must not be painted as a red error.
+          if (isTransientFailure(msg) && attempt < MAX_RETRIES) return;
         }
         sse('codex', event);
         return;
@@ -476,19 +475,6 @@ function startRun(opts, res) {
     }
     sse('text', { line: t });
   };
-
-  child.stdout.on('data', (d) => {
-    buf += d.toString('utf8');
-    const parts = buf.split(/\r?\n/);
-    buf = parts.pop() ?? '';
-    for (const p of parts) handleLine(p);
-  });
-
-  let errBuf = '';
-  child.stderr.on('data', (d) => {
-    errBuf += d.toString('utf8');
-    if (errBuf.length > 20000) errBuf = errBuf.slice(-20000);
-  });
 
   /**
    * `codex exec` writes this banner to stderr even when the prompt was passed
@@ -502,6 +488,7 @@ function startRun(opts, res) {
     /failed to refresh available models/i,
     /^WARN\s+codex_models_manager/i,
   ];
+
   const cleanStderr = (text) =>
     text
       .split(/\r?\n/)
@@ -510,15 +497,76 @@ function startRun(opts, res) {
       .join('\n')
       .trim();
 
-  let finished = false;
+  const launchAttempt = () => {
+    state = { buf: '', errBuf: '', completedTurn: null, failure: '', finished: false };
+    // No `cmd /c` here: it rewrites arguments containing newlines and silently
+    // drops a trailing `-i <image>`. See resolveCodexExe().
+    const attemptArgs = buildArgs({
+      ...opts,
+      prompt: finalPrompt,
+      images: staged.filter((s) => s.isImage).map((s) => s.abs),
+      // After the first attempt the thread exists; continuing it is better than
+      // starting a second, empty session.
+      resumeThreadId: opts.resumeThreadId || (attempt > 0 ? run.threadId : ''),
+    });
+    let child;
+    try {
+      child = spawnCodex(attemptArgs, {
+        cwd: opts.cwd,
+        env,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (e) {
+      sse('fatal', { message: 'failed to start codex: ' + e.message });
+      res.end();
+      return;
+    }
+    run.child = child;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdin.on('error', () => {}); // EPIPE is reported by the child exit/stderr
+    child.stdin.end(finalPrompt);
+
+    child.stdout.on('data', (d) => {
+      state.buf += d.toString('utf8');
+      const parts = state.buf.split(/\r?\n/);
+      state.buf = parts.pop() ?? '';
+      for (const p of parts) handleLine(p);
+    });
+    child.stderr.on('data', (d) => {
+      state.errBuf += d.toString('utf8');
+      if (state.errBuf.length > 20000) state.errBuf = state.errBuf.slice(-20000);
+    });
+    child.on('close', (code, signal) => finish(code, signal));
+    child.on('error', (e) => {
+      sse('fatal', { message: e.message });
+      finish(null);
+    });
+  };
+
   const finish = (code, signal) => {
-    if (finished) return;
-    finished = true;
+    if (state.finished) return;
+    state.finished = true;
+    if (state.buf.trim()) handleLine(state.buf);
+
+    // Retry a spurious upstream blip before telling the page anything final.
+    if (!state.completedTurn && !run.stopped && attempt < MAX_RETRIES){
+      const reason = (state.failure || cleanStderr(state.errBuf)).trim();
+      if (isTransientFailure(reason)){
+        attempt++;
+        sse('retry', { attempt, max: MAX_RETRIES, reason: reason.slice(0, 300) });
+        const wait = RETRY_DELAYS[Math.min(attempt - 1, RETRY_DELAYS.length - 1)];
+        setTimeout(() => { if (!res.writableEnded && !res.destroyed) launchAttempt(); }, wait);
+        return;                       // the response stays open across attempts
+      }
+    }
+
     clearInterval(heartbeat);
-    if (buf.trim()) handleLine(buf);
-    if (completedTurn) {
+    if (state.completedTurn) {
       // The writer can flush its final usage after emitting turn.completed.
       // Read after process close so the meter does not lag by one turn.
+      const completedTurn = state.completedTurn;
       try {
         const saved = rollout.readConversation(run.threadId, { maxMessages: 0 });
         completedTurn.contextUsage = saved.usage;
@@ -534,7 +582,7 @@ function startRun(opts, res) {
       sse('codex', completedTurn);
     }
     running.delete(runId);
-    const err = cleanStderr(errBuf);
+    const err = cleanStderr(state.errBuf);
     if (err) {
       // stderr is not part of the rollout, so a replay (or the automatic refresh
       // after a turn) had nothing to show -- the log vanished exactly when it was
@@ -547,20 +595,13 @@ function startRun(opts, res) {
     try { res.end(); } catch {}
   };
 
-  child.on('close', finish);
-  child.on('error', (e) => {
-    sse('fatal', { message: e.message });
-    finish(null);
-  });
-
   // Client went away -> stop the run so it does not keep burning quota.
   res.on('close', () => {
     clearInterval(heartbeat);
-    if (running.has(runId)) {
-      killTree(child.pid);
-    }
+    if (running.has(runId) && run.child) killTree(run.child.pid);
   });
 
+  launchAttempt();
   return runId;
 }
 

@@ -36,7 +36,18 @@ if (args[0] === 'app-server') {
     emit({ type:'thread.started', thread_id:id });
     emit({ type:'turn.started' });
     if (prompt.startsWith('WAIT')) { setInterval(() => {}, 1000); return; }
-    if (prompt.startsWith('FAIL_EVENT')) { emit({type:'turn.failed',error:{message:'fixture failure'}}); return; }
+    if (prompt.startsWith('FAIL_EVENT')) {
+      // Codex writes the session file when the session starts, BEFORE the turn can
+      // fail -- so even a failed turn can be resumed. Without this the bridge
+      // rightly refuses to continue it ("无法核实此会话的原有权限").
+      const dir=path.join(process.env.CODEX_HOME,'sessions');fs.mkdirSync(dir,{recursive:true});
+      fs.writeFileSync(path.join(dir,`rollout-${id}.jsonl`),[
+        {type:'turn_context',payload:{cwd:process.cwd(),model:'gpt-6.1-sol',sandbox_policy:{type:'read-only'}}},
+        {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:prompt}]}},
+      ].map(row=>JSON.stringify(row)).join('\n'));
+      emit({type:'turn.failed',error:{message:'fixture failure'}});
+      return;
+    }
     // A transport hiccup reported through the `error` event: this is a retry
     // notice, not a failure, and must not render as a red error box.
     if (prompt.startsWith('RECONNECT')) {
@@ -84,6 +95,19 @@ if (args[0] === 'app-server') {
       }
       emit({ type:'item.completed', item:{ type:'agent_message', text:'日志已产生。' } });
       emit({ type:'turn.completed', usage:{input_tokens:700,output_tokens:10,reasoning_output_tokens:0,cached_input_tokens:0} });
+      return;
+    }
+    // A SPURIOUS upstream error: it reports "capacity" even though nothing is
+    // limited, exactly as Codex does now and then. Fails once, succeeds after.
+    if (prompt.startsWith('FLAKY_CAPACITY')) {
+      const mark = path.join(process.cwd(), '.flaky-capacity-once');
+      if (!fs.existsSync(mark)) {
+        try { fs.writeFileSync(mark, '1'); } catch {}
+        emit({ type:'turn.failed', error:{ message:'Selected model is at capacity. Please try a different model.' } });
+        return;
+      }
+      emit({ type:'item.completed', item:{ type:'agent_message', text:'重试后成功：CAPACITY_OK' } });
+      emit({ type:'turn.completed', usage:{input_tokens:600,output_tokens:12,reasoning_output_tokens:0,cached_input_tokens:0} });
       return;
     }
     const big = prompt.startsWith('BIG');

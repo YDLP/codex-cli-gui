@@ -655,6 +655,36 @@ async function main(){
     // A real failure is still a red error box.
     assert.ok(await evaluate("document.querySelectorAll('#log .errbox').length") >= 1,
       'a failed turn must show an error box');
+    // ...with the one action that helps: send the same prompt again.
+    assert.equal(await evaluate("!!document.querySelector('#log .errbox .retry-btn')"),true,
+      'a failed turn offers a retry button');
+    const before=await evaluate("document.querySelectorAll('#log .errbox').length");
+    await evaluate("document.querySelector('#log .errbox .retry-btn').click()");
+    await waitUI("!$test('btnSend').disabled && $test('status').textContent.includes('运行失败')",15000);
+    const after=JSON.parse(await evaluate(`JSON.stringify({
+      boxes: document.querySelectorAll('#log .errbox').length,
+      last: (function(){ var e=document.querySelectorAll('#log .errbox'); return e.length?e[e.length-1].textContent:''; })()
+    })`));
+    console.log('       after the retry click:', JSON.stringify(after));
+    assert.ok(after.boxes > before,'the retry actually ran again: '+JSON.stringify(after));
+    assert.match(after.last,/fixture failure/,'and sent the same prompt: '+JSON.stringify(after));
+  });
+  await check('a spurious capacity error is retried and reported as a notice',async()=>{
+    // "codex那边偶尔会抽风... 这个提示限额，其实没有限额". The bridge retries once;
+    // the page must say so without painting a red failure.
+    await evaluate("$test('btnNew').click();$test('prompt').value='FLAKY_CAPACITY';$test('btnSend').click()");
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",20000);
+    await sleep(300);
+    const st=JSON.parse(await evaluate(`JSON.stringify({
+      notices: [...document.querySelectorAll('#log .notebox')].map(function(n){return n.textContent;}),
+      errors: document.querySelectorAll('#log .errbox').length,
+      answer: /CAPACITY_OK/.test(document.getElementById('log').textContent)
+    })`));
+    console.log('       capacity retry:', JSON.stringify(st));
+    assert.ok(st.notices.some((t) => /正在自动重试（1\/2）/.test(t)),
+      'the retry is announced: '+JSON.stringify(st));
+    assert.equal(st.errors,0,'a retried blip must not leave a red error: '+JSON.stringify(st));
+    assert.equal(st.answer,true,'the second attempt carried the answer: '+JSON.stringify(st));
   });
   await check('a reconnect notice is not dressed up as a failure',async()=>{
     // Reported as a scary red box for "Reconnecting... 2/5 (stream disconnected

@@ -457,6 +457,12 @@
     color:var(--dim); border-radius:8px; padding:7px 12px; font-size:12.5px;
     white-space:pre-wrap; word-break:break-word;
   }
+  /* One action inside a failed turn: send the same thing again. */
+  .errbox .retry-btn{
+    margin-top:8px; padding:3px 12px; font-size:12px;
+    background:transparent; border-color:var(--err); color:var(--err);
+  }
+  .errbox .retry-btn:hover:not(:disabled){background:color-mix(in srgb, var(--err) 12%, transparent)}
   .thinking{display:flex; align-items:center; gap:9px; color:var(--dim); font-size:13px}
   .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:p 1s infinite ease-in-out}
   .dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
@@ -962,6 +968,8 @@
   let stopRequested = false;
   let runFailed = false;
   let pendingFiles = 0;
+  /** What the last turn sent, so a failed one can be retried with one click. */
+  let lastSend = null;
   let attachmentGeneration = 0;
   let usageModel = '';
   let serverContextWindow = 0;
@@ -2776,9 +2784,32 @@
     if (replay) programmaticOpen(toolGroup, false);
   }
 
-  function addError(text){
-    const b = document.createElement('div'); b.className = 'errbox'; b.textContent = text;
+  function addError(text, { retry = false } = {}){
+    const b = document.createElement('div');
+    b.className = 'errbox';
+    const msg = document.createElement('div');
+    msg.textContent = text;
+    b.appendChild(msg);
+    // A failed turn leaves nothing to click, so give the user the one action that
+    // makes sense: send the same prompt again (same attachments included).
+    if (retry && lastSend){
+      const btn = document.createElement('button');
+      btn.className = 'retry-btn';
+      btn.textContent = '重试';
+      btn.title = '用相同的提示和附件再发一次';
+      btn.onclick = () => retryLastTurn();
+      b.appendChild(btn);
+    }
     row('agent', '错误', b);
+  }
+
+  /** Re-send the last prompt, attachments included. */
+  function retryLastTurn(){
+    if (busy || !lastSend) return;
+    $('prompt').value = lastSend.prompt;
+    attachments = lastSend.attachments.slice();
+    renderAttachments(); autoGrow();
+    send();
   }
 
   /**
@@ -2793,18 +2824,35 @@
     return /^\s*Reconnecting/i.test(s) || /stream disconnected/i.test(s) || /tls handshake/i.test(s);
   }
 
+  /** A dim notice row: no alarm, but on the record. */
+  function addNotice(text){
+    const b = document.createElement('div');
+    b.className = 'notebox';
+    b.textContent = text;
+    row('agent', '提示', b);
+  }
+
   /** A retry notice: dim, counted, and carrying the reason without alarm. */
   function addTransientNotice(message){
     const raw = String(message || '');
     const m = raw.match(/(\d+)\s*\/\s*(\d+)/);
     let detail = raw.replace(/^\s*Reconnecting[^()]*/i, '').trim();
     detail = detail.replace(/^\(+/, '').replace(/\)+$/, '').trim();
-    const b = document.createElement('div');
-    b.className = 'notebox';
-    b.textContent = '网络中断，正在自动重连' +
+    addNotice('网络中断，正在自动重连' +
       (m ? '（' + m[1] + '/' + m[2] + '）' : '') +
-      (detail ? ' · ' + detail : '');
-    row('agent', '提示', b);
+      (detail ? ' · ' + detail : ''));
+  }
+
+  /**
+   * The bridge decided an upstream error was spurious and is trying again.
+   *
+   * Codex occasionally answers "Selected model is at capacity" when nothing is
+   * limited; retrying is cheaper than making the user re-send.
+   */
+  function addBridgeRetryNotice(data){
+    const reason = String(data && data.reason || '').replace(/\s+/g, ' ').trim();
+    addNotice('上游临时错误，正在自动重试（' + (data.attempt || 1) + '/' + (data.max || 1) + '）' +
+      (reason ? ' · ' + reason.slice(0, 160) : ''));
   }
   function addMeta(text){
     const b = document.createElement('div'); b.className = 'meta'; b.textContent = text;
@@ -3090,7 +3138,7 @@
         if (tsQuery && !$('tsSearch').hidden) setTimeout(() => tsRunSearch(tsQuery), 0);
         break;
       }
-      case 'turn.failed': runFailed = true; addError(ev.error?.message || JSON.stringify(ev.error)); break;
+      case 'turn.failed': runFailed = true; addError(ev.error?.message || JSON.stringify(ev.error), { retry: true }); break;
       case 'error':
         // Codex reports routine transport trouble through the SAME `error` event it
         // uses for real failures. "Reconnecting... 2/5 (stream disconnected before
@@ -3149,6 +3197,7 @@
     const cwd = $('cwd').value.trim();
     if (!cwd){ addError('请先选择工作目录。'); return; }
     const sentAttachments = attachments.slice();
+    lastSend = { prompt, attachments: sentAttachments.slice() };
     const payload = {
       prompt, cwd,
       model: $('model').value,
@@ -3318,6 +3367,7 @@
             status('运行中 · ' + (data.cwd || ''));
           }
           else if (name === 'text'){ if (visible()){ showThinking(false); addMeta(data.line); } }
+          else if (name === 'retry'){ if (visible()) addBridgeRetryNotice(data); }
           else if (name === 'stderr'){ if (visible()) addCliLog(data.text); }
           else if (name === 'fatal'){ run.failed = true; if (visible()){ runFailed = true; showThinking(false); addError(data.message); } }
           else if (name === 'exit'){
@@ -3347,7 +3397,7 @@
       if (run.stopRequested || e.name === 'AbortError'){
         if (visible()) status('已停止');
       } else if (visible()){
-        addError(e.message);
+        addError(e.message, { retry: true });
         status(accepted ? '连接中断或运行失败' : '发送失败，输入和附件已保留');
       }
     } finally {
