@@ -669,6 +669,21 @@ async function main(){
     assert.ok(after.boxes > before,'the retry actually ran again: '+JSON.stringify(after));
     assert.match(after.last,/fixture failure/,'and sent the same prompt: '+JSON.stringify(after));
   });
+  await check('a silent turn gets a stall warning',async()=>{
+    // Codex has no read timeout: a dead stream hangs with no output and no CPU
+    // (measured: seven frozen minutes on one half-closed socket). The bridge warns;
+    // it never kills, because a long command emits nothing for minutes too.
+    process.env.CODEX_GUI_STALL_MS='600';
+    try{
+      await evaluate("$test('btnNew').click();$test('prompt').value='SILENT_GAP';$test('btnSend').click()");
+      await waitUI("/没有收到任何输出/.test(document.getElementById('log').textContent)",12000);
+      const txt=await evaluate("(function(){var n=[...document.querySelectorAll('#log .notebox')];return n.length?n[n.length-1].textContent:'';})()");
+      console.log('       stall notice:', JSON.stringify(txt));
+      assert.match(txt,/可能已经卡死/,'the notice says what it means: '+txt);
+      assert.match(txt,/停止/,'and points at the way out: '+txt);
+      await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",15000);
+    }finally{ delete process.env.CODEX_GUI_STALL_MS; }
+  });
   await check('a spurious capacity error is retried and reported as a notice',async()=>{
     // "codex那边偶尔会抽风... 这个提示限额，其实没有限额". The bridge retries once;
     // the page must say so without painting a red failure.

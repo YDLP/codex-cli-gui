@@ -446,12 +446,48 @@ function startRun(opts, res) {
   /** Per attempt: a retry starts from a clean slate, never from the failed text. */
   let state = { buf: '', errBuf: '', completedTurn: null, failure: '', finished: false };
 
+  /**
+   * Stall detection. `codex exec` has no read timeout: if the stream dies mid-turn
+   * it waits forever, with no output and no CPU. Measured on a real stuck turn:
+   * seven minutes of a frozen process, one half-closed socket, nothing in the logs.
+   *
+   * This only WARNS. A long command legitimately emits nothing between
+   * `item.started` and `item.completed`, so a command in flight suppresses the
+   * warning entirely -- killing on a timer would murder builds.
+   */
+  const stallLimitMs = () => Math.max(500, Number(process.env.CODEX_GUI_STALL_MS) || 180000);
+  let lastEventAt = Date.now();
+  let stallWarned = false;
+  const inFlightCommands = new Set();
+  let watchdog = null;
+
+  const startWatchdog = () => {
+    if (watchdog) clearInterval(watchdog);
+    const every = Math.min(5000, Math.max(250, Math.floor(stallLimitMs() / 4)));
+    watchdog = setInterval(() => {
+      if (res.destroyed || res.writableEnded) return;
+      if (stallWarned || inFlightCommands.size) return;
+      const silent = Date.now() - lastEventAt;
+      if (silent < stallLimitMs()) return;
+      stallWarned = true;
+      sse('warning', { kind: 'stall', seconds: Math.round(silent / 1000) });
+    }, every);
+    watchdog.unref();
+  };
+
   const handleLine = (line) => {
     const t = line.trim();
     if (!t) return;
     if (t.startsWith('{')) {
       try {
         const event = JSON.parse(t);
+        lastEventAt = Date.now();
+        stallWarned = false;
+        if (event.type === 'item.started' && event.item && event.item.type === 'command_execution'){
+          inFlightCommands.add(String(event.item.id || 'cmd'));
+        } else if (event.type === 'item.completed' && event.item && event.item.type === 'command_execution'){
+          inFlightCommands.delete(String(event.item.id || 'cmd'));
+        }
         if (event.type === 'thread.started') run.threadId = event.thread_id;
         if (event.type === 'turn.completed') {
           // Held back until the process exits, because only then is the usage
@@ -499,6 +535,10 @@ function startRun(opts, res) {
 
   const launchAttempt = () => {
     state = { buf: '', errBuf: '', completedTurn: null, failure: '', finished: false };
+    lastEventAt = Date.now();
+    stallWarned = false;
+    inFlightCommands.clear();
+    startWatchdog();
     // No `cmd /c` here: it rewrites arguments containing newlines and silently
     // drops a trailing `-i <image>`. See resolveCodexExe().
     const attemptArgs = buildArgs({
@@ -563,6 +603,7 @@ function startRun(opts, res) {
     }
 
     clearInterval(heartbeat);
+    if (watchdog) { clearInterval(watchdog); watchdog = null; }
     if (state.completedTurn) {
       // The writer can flush its final usage after emitting turn.completed.
       // Read after process close so the meter does not lag by one turn.
@@ -598,6 +639,7 @@ function startRun(opts, res) {
   // Client went away -> stop the run so it does not keep burning quota.
   res.on('close', () => {
     clearInterval(heartbeat);
+    if (watchdog) { clearInterval(watchdog); watchdog = null; }
     if (running.has(runId) && run.child) killTree(run.child.pid);
   });
 

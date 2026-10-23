@@ -110,6 +110,14 @@ if (args[0] === 'app-server') {
       emit({ type:'turn.completed', usage:{input_tokens:600,output_tokens:12,reasoning_output_tokens:0,cached_input_tokens:0} });
       return;
     }
+    // A turn that says nothing for a while: exactly what a stalled request looks
+    // like, and what the stall warning is for.
+    if (prompt.startsWith('SILENT_GAP')) {
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+      emit({ type:'item.completed', item:{ type:'agent_message', text:'静默结束：SILENT_OK' } });
+      emit({ type:'turn.completed', usage:{input_tokens:500,output_tokens:8,reasoning_output_tokens:0,cached_input_tokens:0} });
+      return;
+    }
     const big = prompt.startsWith('BIG');
     // THREE deliberately LONG commands, so two things can be checked for real:
     //   1. a long command left in <summary> kept the card wide open when folded;

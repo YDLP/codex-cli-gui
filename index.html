@@ -3367,6 +3367,13 @@
             status('运行中 · ' + (data.cwd || ''));
           }
           else if (name === 'text'){ if (visible()){ showThinking(false); addMeta(data.line); } }
+          else if (name === 'warning'){
+            if (visible()){
+              const secs = Number(data && data.seconds) || 0;
+              const spent = secs >= 60 ? Math.round(secs / 60) + ' 分钟' : secs + ' 秒';
+              addNotice('⚠ 已经 ' + spent + ' 没有收到任何输出，可能已经卡死。可以点「停止」，再用错误框里的「重试」重发。');
+            }
+          }
           else if (name === 'retry'){ if (visible()) addBridgeRetryNotice(data); }
           else if (name === 'stderr'){ if (visible()) addCliLog(data.text); }
           else if (name === 'fatal'){ run.failed = true; if (visible()){ runFailed = true; showThinking(false); addError(data.message); } }

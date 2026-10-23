@@ -97,6 +97,8 @@ const read = (p) => new Promise((res, rej) => {
     // A finished turn is rebuilt from disk, but only when the file agrees.
     ['a finished turn re-renders from disk', /function reloadTranscriptAfterTurn/],
     ['that refresh refuses to replace a mismatched feed', /function lastAnswerMatches/],
+    // A silent turn is announced (never killed: long commands are silent too).
+    ['a stalled turn is reported', /name === 'warning'/],
   ];
   let ok = 0;
   for (const [label, re] of checks) {

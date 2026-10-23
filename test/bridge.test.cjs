@@ -97,6 +97,18 @@ test('cross-origin, non-JSON, and forged Host requests are denied',async()=>{
 test('oversize settings body returns an HTTP error, not a connection reset',async()=>{
   assert.equal((await post('/api/settings',{padding:'x'.repeat(2*1024*1024)})).status,413);
 });
+test('a silent turn is reported as possibly stalled',async()=>{
+  // `codex exec` has no read timeout, so a dead stream just hangs. The bridge warns
+  // (it never kills): a long command legitimately emits nothing for minutes.
+  process.env.CODEX_GUI_STALL_MS='600';
+  try{
+    const run=await openRun('SILENT_GAP');
+    const text=await run.done;
+    assert.match(text,/event: warning/,'the page must be told the turn went quiet');
+    assert.match(text,/"kind":"stall"/,'and why');
+    assert.match(text,/SILENT_OK/,'the turn still finishes normally');
+  }finally{ delete process.env.CODEX_GUI_STALL_MS; }
+});
 test('a spurious capacity error is retried without bothering the user',async()=>{
   // Codex sometimes reports "Selected model is at capacity" when nothing is
   // limited. One silent retry is cheaper than making the user press send again.
