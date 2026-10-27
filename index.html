@@ -1106,6 +1106,9 @@
   async function openFileViewer(target, line){
     let p = String(target || '').trim();
     if (!p) return;
+    // "/E:/dir/file" is drive-relative on Windows: it resolves to E:\E:\dir\file
+    // and reports "文件不存在" for a file that exists. The link means E:/dir/file.
+    if (/^[\\/]+[A-Za-z]:/.test(p)) p = p.replace(/^[\\/]+/, '');
     let jump = Number(line) || 0;
     const lineSuffix = p.match(/^(.*?):(\d{1,7})$/);
     if (lineSuffix && !/^[A-Za-z]:$/.test(lineSuffix[1])){

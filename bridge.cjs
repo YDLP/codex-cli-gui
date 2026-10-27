@@ -652,13 +652,28 @@ function startRun(opts, res) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Strip a leading separator that sits before a drive letter.
+ *
+ * MEASURED: a link to `/E:/Cockpit_Department_1/.../can_par.c` was reported as
+ * "文件不存在" although the file was right there. On Windows that form is
+ * drive-RELATIVE: `path.isAbsolute` says true, and `path.resolve` turns it into
+ * `E:\E:\Cockpit_...\can_par.c`. Stripping the separator is what the link meant.
+ */
+function normalizeLocalPath(raw){
+  let p = String(raw || '').trim();
+  if (/^[\\/]+[A-Za-z]:/.test(p)) p = p.replace(/^[\\/]+/, '');
+  return p;
+}
+
+/**
  * Validate a path the PAGE wants to read or open.
  *
  * These paths come out of model output, so the rule is absolute + exists +
  * inside the configured working directory. Anything else is refused, which is
  * what stops a reply from making the user open C:\Windows\... .
  */
-function requireLocalPath(target) {
+function requireLocalPath(rawTarget) {
+  const target = normalizeLocalPath(rawTarget);
   if (!target || !path.isAbsolute(target)) throw httpError('只能打开绝对路径');
   let stat;
   try { stat = fs.statSync(target); } catch { throw httpError('文件不存在：' + target, 404); }

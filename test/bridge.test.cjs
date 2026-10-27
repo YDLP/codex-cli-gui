@@ -75,6 +75,12 @@ test('the viewer reads files, but only inside the working directory',async()=>{
     assert.equal(body.name,'view-probe.txt','the original file name casing is kept');
     assert.equal(body.binary,false);
     assert.match(body.text,/line one/);
+    // "/E:/dir/file" is drive-RELATIVE on Windows: path.resolve turns it into
+    // E:\E:\dir\file, so a file that exists was reported as missing. Links written
+    // that way must open the file they point at.
+    const slashed=await (await post('/api/file',{path:'/'+inside.split(path.sep).join('/')})).json();
+    assert.equal(slashed.ok,true,'a leading separator before the drive must be ignored');
+    assert.match(slashed.text||'',/line one/);
   }finally{try{fs.unlinkSync(inside);}catch{}}
 
   // A bare `file.c:236` reference has no directory, so the page asks for a lookup.
