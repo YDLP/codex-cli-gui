@@ -212,6 +212,20 @@
     background:var(--panel); white-space:pre-wrap; word-break:break-word;
   }
   .row.user .bubble{background:var(--userbg); border-color:var(--userbd)}
+  /* The copy button sits NEXT TO the bubble, not inside it: the bubble's
+     textContent must stay exactly the message, which the tests (and any future
+     export) rely on. */
+  .bubble-wrap{position:relative}
+  .msg-copy{
+    position:absolute; top:5px; right:7px; padding:0 7px;
+    font-size:11px; line-height:18px; border-radius:5px;
+    color:var(--dim); background:var(--panel); border:1px solid var(--line);
+    opacity:0; transition:opacity .12s var(--ease), color .12s var(--ease);
+    cursor:pointer;
+  }
+  .bubble-wrap:hover > .msg-copy, .msg-copy:focus-visible{opacity:1}
+  .msg-copy:hover{border-color:var(--accent); color:var(--accent)}
+  .msg-copy.done{color:var(--ok); border-color:var(--ok); opacity:1}
 
   /* ---- attachments inside a replayed message ---- */
   .att-row{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px}
@@ -1338,6 +1352,52 @@
 
   let turnCounter = 0;
 
+  /**
+   * Write text to the clipboard, with the fallback headless browsers need.
+   *
+   * Shared by the code-block button and the per-message button so there is one
+   * place that knows about `navigator.clipboard` being unavailable.
+   */
+  function copyToClipboard(text, onDone, onFail){
+    // The async API rejects when the document is not focused or permission is
+    // withheld, so a rejection must fall back too -- not just a missing API.
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        ok ? onDone() : onFail();
+      } catch { onFail(); }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(onDone, fallback);
+      return;
+    }
+    fallback();
+  }
+
+  /** A small button that copies `text`, with 已复制 / 复制失败 feedback. */
+  function makeCopyButton(text, { className = 'md-copy', title = '复制', stopPropagation = false } = {}){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = className;
+    btn.textContent = '复制';
+    btn.title = title;
+    btn.addEventListener('click', (e) => {
+      if (stopPropagation) e.stopPropagation();
+      copyToClipboard(String(text == null ? '' : text), () => {
+        btn.textContent = '已复制'; btn.classList.add('done');
+        setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('done'); }, 1400);
+      }, () => {
+        btn.textContent = '复制失败';
+        setTimeout(() => { btn.textContent = '复制'; }, 1400);
+      });
+    });
+    return btn;
+  }
+
   function addUser(text, attachments){
     // A new exchange starts here, so seal the previous turn's card. Without this
     // the pinned reply card would sit ABOVE this new user message, because the
@@ -1354,7 +1414,17 @@
     const b = document.createElement('div'); b.className = 'bubble';
     if (text){ const t = document.createElement('div'); t.textContent = text; b.appendChild(t); }
     if (attachments && attachments.length) b.appendChild(buildAttachmentRow(attachments));
-    const r = row('user', '你', b);
+    const wrap = document.createElement('div');
+    wrap.className = 'bubble-wrap';
+    wrap.appendChild(b);
+    // Copying your own prompt by hand-selecting the text is what this replaces:
+    // with a bad connection, or when moving a prompt to another session, the
+    // selection often will not hold. Kept OUTSIDE the bubble so its textContent
+    // stays exactly the message.
+    if (text) wrap.appendChild(makeCopyButton(text, {
+      className: 'msg-copy', title: '复制这条消息', stopPropagation: true,
+    }));
+    const r = row('user', '你', wrap);
     // Anchor for the jump rail, so a dot can scroll straight to this prompt.
     r.dataset.prompt = text || (attachments && attachments.length ? '（仅附件）' : '');
     return r;
@@ -1962,29 +2032,8 @@
         }
         const pre = document.createElement('pre');
         pre.textContent = body.join('\n');
-        const copy = document.createElement('button');
-        copy.type = 'button';
-        copy.className = 'md-copy';
-        copy.textContent = '复制';
-        copy.addEventListener('click', () => {
-          // Copy the raw text, not the rendered nodes.
-          const text = pre.textContent;
-          const done = () => { copy.textContent = '已复制'; copy.classList.add('done');
-            setTimeout(() => { copy.textContent = '复制'; copy.classList.remove('done'); }, 1400); };
-          const fail = () => { copy.textContent = '复制失败';
-            setTimeout(() => { copy.textContent = '复制'; }, 1400); };
-          if (navigator.clipboard?.writeText){
-            navigator.clipboard.writeText(text).then(done, fail);
-          } else {
-            // Headless browsers and non-secure origins may not expose the API.
-            const ta = document.createElement('textarea');
-            ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-            document.body.appendChild(ta); ta.select();
-            try { document.execCommand('copy') ? done() : fail(); } catch { fail(); }
-            ta.remove();
-          }
-        });
-        bar.appendChild(copy);
+        // Copy the raw text, not the rendered nodes.
+        bar.appendChild(makeCopyButton(pre.textContent, { className: 'md-copy' }));
         wrap.appendChild(bar);
         wrap.appendChild(pre);
         host.appendChild(wrap);

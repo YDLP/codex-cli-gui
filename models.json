@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-15T06:50:52.469Z",
+  "generatedAt": "2026-10-29T08:09:13.039Z",
   "source": "Codex model catalog (not an entitlement check)",
   "models": [
     {
@@ -45,6 +45,41 @@
       "contextWindow": 272000,
       "maxContextWindow": 872000,
       "usableContextWindow": 258400,
+      "efforts": [
+        {
+          "value": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "value": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "value": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "value": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "value": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
+        {
+          "value": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ]
+    },
+    {
+      "slug": "gpt-6.1-terra",
+      "name": "GPT-6.1 Terra",
+      "description": "GPT-6.1 Terra Codex model.",
+      "defaultEffort": "low",
+      "contextWindow": 500000,
+      "maxContextWindow": 872000,
+      "usableContextWindow": 475000,
       "efforts": [
         {
           "value": "low",

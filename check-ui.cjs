@@ -337,6 +337,32 @@ async function main(){
     assert.equal(await evaluate("$test('cwd').value"),workspaceA);
     assert.match(await evaluate("$test('ctxText').textContent"),/1,100/);
   });
+  await check('each of your own messages can be copied with one click',async()=>{
+    // Asked for as "在我的每次回复加个复制" -- hand-selecting a prompt breaks when
+    // the connection is bad or the prompt is being moved to another session.
+    const before=JSON.parse(await evaluate(`JSON.stringify({
+      buttons: document.querySelectorAll('#log .row.user .msg-copy').length,
+      bubbles: document.querySelectorAll('#log .row.user .bubble').length,
+      polluted: [...document.querySelectorAll('#log .row.user .bubble')].some(function(b){ return /复制/.test(b.textContent); })
+    })`));
+    console.log('       copy buttons:', JSON.stringify(before));
+    assert.equal(before.buttons,before.bubbles,'every user message gets a button: '+JSON.stringify(before));
+    assert.equal(before.polluted,false,'the button must live OUTSIDE the bubble text: '+JSON.stringify(before));
+
+    // Record what actually reaches the clipboard instead of reading it back.
+    await evaluate(`(() => {
+      window.__copied = null;
+      navigator.clipboard.writeText = (t) => { window.__copied = t; return Promise.resolve(); };
+    })()`);
+    await evaluate("document.querySelectorAll('#log .row.user .msg-copy')[0].click()");
+    await sleep(300);
+    assert.equal(await evaluate("window.__copied"),'Session A user1','the prompt text is copied: '+await evaluate("String(window.__copied)"));
+    assert.equal(await evaluate("document.querySelectorAll('#log .row.user .msg-copy')[0].textContent"),'已复制',
+      'the button confirms it');
+    await sleep(1500);
+    assert.equal(await evaluate("document.querySelectorAll('#log .row.user .msg-copy')[0].textContent"),'复制',
+      'and returns to its resting label');
+  });
   await check('selecting text and pressing Ctrl+F searches for it',async()=>{
     // Requested: the search only worked by opening it first and then typing; the
     // natural gesture is to select a word and hit Ctrl+F.
