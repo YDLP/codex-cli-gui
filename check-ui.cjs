@@ -1136,7 +1136,9 @@ async function main(){
     })`);
     const r=JSON.parse(md);
     assert.ok(r.code>=1,'fenced code block must render as a block, got: '+md);
-    assert.equal(r.lang,1,'language tag must be shown');
+    // >= 1, not == 1: a reply can legitimately carry several blocks (the fixture
+    // now has a js block and a c block).
+    assert.ok(r.lang>=1,'language tag must be shown: '+md);
     assert.ok(r.strong>=1,'bold must render');
     assert.ok(r.inlineCode>=1,'inline code must render');
     assert.ok(r.link>=1,'links must render as anchors');
@@ -1830,6 +1832,46 @@ async function main(){
   const screenshot=await cdp('Page.captureScreenshot',{format:'png'});
   const artifact=path.join(__dirname,'.codex-gui','review-ui.png');
   fs.mkdirSync(path.dirname(artifact),{recursive:true});fs.writeFileSync(artifact,Buffer.from(screenshot.data,'base64'));
+  // Runs LAST: it replaces the transcript with a fresh turn, so it must not be
+  // placed before checks that read whatever was on screen.
+  await check('a loose ordered list stays ONE list and numbers 1 2 3',async()=>{
+    // Reported with a screenshot: three items all numbered "1.". The source was a
+    // correct CommonMark list; the renderer closed the <ol> at the first non-marker
+    // line, so each item became its own list and restarted at 1.
+    // The screenshot block above points cwd at a fictional demo folder; put the
+    // fixture directory back or the turn cannot start.
+    await evaluate(`$test('cwd').value=${JSON.stringify(temp)}`);
+    await evaluate("$test('btnNew').click()");
+    await waitUI("$test('status').textContent === '已开始新会话' && !$test('btnSend').disabled",8000);
+    await evaluate("$test('prompt').value='列表渲染检查';$test('btnSend').click()");
+    await waitUI("$test('status').textContent === '完成' && !$test('btnSend').disabled",25000);
+    const st=JSON.parse(await evaluate(`(() => {
+      const bubble = [...document.querySelectorAll('#log .bubble.md')]
+        .find(function (b) { return /外层成立/.test(b.textContent || ''); });
+      if (!bubble) return JSON.stringify({ found: false });
+      const lists = [...bubble.querySelectorAll('ol')];
+      const first = lists[0];
+      return JSON.stringify({
+        found: true,
+        ols: lists.length,
+        items: first ? first.children.length : 0,
+        start: first ? (Number(first.getAttribute('start')) || 1) : 0,
+        texts: first ? [...first.children].map(function (li) {
+          return (li.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 24);
+        }) : [],
+        codeInsideSecond: first && first.children[1]
+          ? first.children[1].querySelectorAll('pre').length : 0
+      });
+    })()`));
+    console.log('       loose list:', JSON.stringify(st));
+    assert.equal(st.found,true,'the fixture reply must be on screen');
+    assert.equal(st.ols,1,'one ordered list, not three: '+JSON.stringify(st));
+    assert.equal(st.items,3,'with three items: '+JSON.stringify(st));
+    assert.equal(st.start,1,'still numbered from 1: '+JSON.stringify(st));
+    assert.match(st.texts[0],/外层成立/,'items keep their own text: '+JSON.stringify(st));
+    assert.match(st.texts[2],/软复位/,'including the last one: '+JSON.stringify(st));
+    assert.equal(st.codeInsideSecond,1,'the fenced block belongs to item 2: '+JSON.stringify(st));
+  });
   await check('an older backend cannot accept requests from the updated UI',async()=>{
     await cdp('Page.addScriptToEvaluateOnNewDocument',{source:`const originalFetch=window.fetch;window.fetch=(url,options)=>url==='/api/health'?Promise.resolve(new Response(JSON.stringify({ok:true,capabilities:{sessions:true}}))):originalFetch(url,options);`});
     await cdp('Page.navigate',{url:origin});

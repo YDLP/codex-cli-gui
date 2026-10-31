@@ -187,6 +187,25 @@ if (args[0] === 'app-server') {
       '',
       '---',
       '',
+      // A LOOSE ordered list with indented continuation, a fenced block inside an
+      // item, and blank lines between items. MEASURED against a real reply: the
+      // renderer used to close the list at the first non-marker line, so every item
+      // became its own <ol> and the page showed "1. 1. 1.".
+      '1. **外层成立，进入。**  ',
+      '   内层判断不成立，跳过 `#30～#40`。',
+      '',
+      '2. **继续执行后面的 `#50～#60`。**  ',
+      '   设置时钟源，然后执行：',
+      '',
+      '   ```c',
+      '   CAN_WRITE_PROTECTED_REG_RESET(pFlexCANLocal->canmcr, kFlexCAN_MDIS);',
+      '   ```',
+      '',
+      '   清掉 `MDIS`，重新启用模块。',
+      '',
+      '3. **接下来执行软复位。**  ',
+      '   `CanLL_ExecuteSoftReset()` 发起软复位并等待完成。',
+      '',
       '<img src=x onerror="window.__xss=1">',
     ].join('\n');
     const line = Buffer.from(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:replyText}})+'\n');

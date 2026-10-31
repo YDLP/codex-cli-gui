@@ -2124,19 +2124,66 @@
       }
 
       // Lists.
-      const ul = line.match(/^\s*[-*+]\s+(.*)$/);
-      const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
-      if (ul || ol){
+      //
+      // A list is not "consecutive marker lines". MEASURED with a real reply:
+      //   1. **外层 `if` 成立。**
+      //      内层…（3 空格续行）
+      //
+      //   2. **继续执行…**
+      //      ```c
+      //      …
+      //      ```
+      //   3. **接下来…**
+      // The old loop stopped at the first line that was not a marker, so every item
+      // became its OWN <ol> and the browser numbered them 1. 1. 1.
+      //
+      // Now: blank lines between items keep the list open (a "loose" list), and
+      // indented lines belong to the item, so paragraphs and fenced code inside an
+      // item are parsed by the same renderer.
+      const ulStart = line.match(/^(\s*)[-*+]\s+(.*)$/);
+      const olStart = line.match(/^(\s*)(\d+)[.)]\s+(.*)$/);
+      if (ulStart || olStart){
         flushParagraph(para);
-        const ordered = !!ol;
+        const ordered = !!olStart;
+        const markerRe = ordered ? /^(\s*)(\d+)[.)]\s+(.*)$/ : /^(\s*)[-*+]\s+(.*)$/;
         const list = document.createElement(ordered ? 'ol' : 'ul');
+        if (ordered){
+          const startAt = Number(olStart[2]);
+          if (Number.isFinite(startAt) && startAt !== 1) list.start = startAt;
+        }
+        const indentOf = (s) => s.match(/^\s*/)[0].length;
+
         while (i < lines.length){
-          const mm = ordered ? lines[i].match(/^\s*\d+[.)]\s+(.*)$/) : lines[i].match(/^\s*[-*+]\s+(.*)$/);
-          if (!mm) break;
-          const li = document.createElement('li');
-          renderInline(mm[1], li);
-          list.appendChild(li);
+          const m = lines[i].match(markerRe);
+          if (!m){
+            // A blank run is allowed before the NEXT item (loose list); anything
+            // else ends the list.
+            if (!lines[i].trim()){
+              let j = i;
+              while (j < lines.length && !lines[j].trim()) j++;
+              if (j < lines.length && markerRe.test(lines[j])){ i = j; continue; }
+            }
+            break;
+          }
+          const body = [ordered ? m[3] : m[2]];
           i++;
+          // Continuation: indented content (>= 2 spaces) belongs to this item,
+          // blank lines included when what follows is still indented or a marker.
+          while (i < lines.length){
+            const raw = lines[i];
+            if (!raw.trim()){
+              let j = i;
+              while (j < lines.length && !lines[j].trim()) j++;
+              if (j >= lines.length) break;
+              if (indentOf(lines[j]) >= 2 || markerRe.test(lines[j])){ body.push(''); i++; continue; }
+              break;
+            }
+            if (indentOf(raw) >= 2){ body.push(raw.replace(/^ {0,3}/, '')); i++; continue; }
+            break;
+          }
+          const li = document.createElement('li');
+          renderMarkdownInto(body.join('\n'), li);
+          list.appendChild(li);
         }
         host.appendChild(list);
         continue;
