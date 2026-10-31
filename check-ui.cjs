@@ -1868,9 +1868,25 @@ async function main(){
     assert.equal(st.ols,1,'one ordered list, not three: '+JSON.stringify(st));
     assert.equal(st.items,3,'with three items: '+JSON.stringify(st));
     assert.equal(st.start,1,'still numbered from 1: '+JSON.stringify(st));
+    assert.match(st.texts[0],/^1\. /,'the number is real text: '+JSON.stringify(st));
+    assert.match(st.texts[1],/^2\. /,'and counts up: '+JSON.stringify(st));
+    assert.match(st.texts[2],/^3\. /,'including the last item: '+JSON.stringify(st));
     assert.match(st.texts[0],/外层成立/,'items keep their own text: '+JSON.stringify(st));
-    assert.match(st.texts[2],/软复位/,'including the last one: '+JSON.stringify(st));
     assert.equal(st.codeInsideSecond,1,'the fenced block belongs to item 2: '+JSON.stringify(st));
+
+    // Selecting the list and copying must carry the numbers: a browser ::marker
+    // lives outside the text layer, which is why "序号不能选中，不能复制".
+    const selected=await evaluate(`(() => {
+      const ol = document.querySelector('#log .bubble.md ol');
+      const r = document.createRange(); r.selectNodeContents(ol);
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      const text = String(s);
+      s.removeAllRanges();
+      return text;
+    })()`);
+    console.log('       selected text:', JSON.stringify(selected.slice(0, 60)));
+    assert.match(selected,/\b1\. /,'the selection contains item 1: '+JSON.stringify(selected.slice(0,60)));
+    assert.match(selected,/\b3\. /,'and item 3: '+JSON.stringify(selected.slice(0,60)));
   });
   await check('an older backend cannot accept requests from the updated UI',async()=>{
     await cdp('Page.addScriptToEvaluateOnNewDocument',{source:`const originalFetch=window.fetch;window.fetch=(url,options)=>url==='/api/health'?Promise.resolve(new Response(JSON.stringify({ok:true,capabilities:{sessions:true}}))):originalFetch(url,options);`});

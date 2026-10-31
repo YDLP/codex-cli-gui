@@ -324,8 +324,24 @@
     margin:12px 0 6px; font-size:14px; font-weight:700; line-height:1.4;
   }
   .bubble.md h3{font-size:15px}
-  .bubble.md ul,.bubble.md ol{margin:0 0 8px; padding-left:22px}
-  .bubble.md li{margin:2px 0}
+  /* The number is REAL TEXT, not a browser list marker.
+     `::marker` lives outside the text layer: selecting the transcript and copying
+     it dropped every "1." "2." (reported as "序号不能选中，不能复制"). The marker is
+     positioned instead of inlined so wrapped lines still align under the text. */
+  .bubble.md ul,.bubble.md ol{margin:0 0 8px; padding-left:1.9em; list-style:none}
+  .bubble.md li{margin:2px 0; padding-left:1.9em}
+  /* The number is REAL TEXT, inline at the start of the item's first paragraph,
+     pulled into the padding so wrapped lines hang under the text. A browser
+     ::marker lives outside the text layer, which is why selecting and copying the
+     reply dropped every "1." (reported as "序号不能选中，不能复制"). */
+  .bubble.md .li-mark{
+    display:inline; margin-left:-1.9em; margin-right:.35em;
+    color:var(--dim); user-select:text;
+  }
+  /* The item body is a wrapper, so the marker can sit beside it. Its block
+     children must not add their own top margin inside the item. */
+  .bubble.md .li-body > *:first-child{margin-top:0}
+  .bubble.md .li-body > *:last-child{margin-bottom:0}
   .bubble.md blockquote{
     margin:0 0 8px; padding:4px 10px; border-left:3px solid var(--line);
     color:var(--dim);
@@ -2147,9 +2163,11 @@
         const ordered = !!olStart;
         const markerRe = ordered ? /^(\s*)(\d+)[.)]\s+(.*)$/ : /^(\s*)[-*+]\s+(.*)$/;
         const list = document.createElement(ordered ? 'ol' : 'ul');
+        let ordinal = 1;
         if (ordered){
           const startAt = Number(olStart[2]);
           if (Number.isFinite(startAt) && startAt !== 1) list.start = startAt;
+          if (Number.isFinite(startAt)) ordinal = startAt;
         }
         const indentOf = (s) => s.match(/^\s*/)[0].length;
 
@@ -2182,7 +2200,25 @@
             break;
           }
           const li = document.createElement('li');
-          renderMarkdownInto(body.join('\n'), li);
+          // Render the item body into a child, not the <li> itself: the renderer
+          // clears its host, which would wipe the marker placed before it.
+          const bodyHost = document.createElement('div');
+          bodyHost.className = 'li-body';
+          renderMarkdownInto(body.join('\n'), bodyHost);
+          // The visible marker as TEXT, joined to the first paragraph so copying a
+          // selection yields "1. 外层…" rather than the number on its own line.
+          const mark = document.createElement('span');
+          mark.className = 'li-mark';
+          mark.textContent = ordered ? (ordinal++) + '. ' : '• ';
+          const firstBlock = bodyHost.firstElementChild;
+          if (firstBlock && firstBlock.tagName !== 'PRE' && firstBlock.tagName !== 'DIV'){
+            firstBlock.insertBefore(mark, firstBlock.firstChild);
+          } else {
+            const lead = document.createElement('p');
+            lead.appendChild(mark);
+            bodyHost.insertBefore(lead, bodyHost.firstChild);
+          }
+          li.appendChild(bodyHost);
           list.appendChild(li);
         }
         host.appendChild(list);
