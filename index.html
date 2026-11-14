@@ -565,6 +565,29 @@
   }
   .sess:hover{background:var(--panel2)}
   .sess.active{background:var(--userbg); border-color:var(--userbd)}
+  /* ---- session groups, one card per working directory ---- */
+  .sess-group{
+    border:1px solid var(--line); border-radius:7px; background:var(--panel);
+    margin-bottom:6px; overflow:hidden;
+  }
+  .sess-group > summary{
+    cursor:pointer; padding:6px 9px; font-size:11.5px; color:var(--dim);
+    display:flex; align-items:center; gap:6px; user-select:none;
+  }
+  .sess-group > summary:hover{background:var(--panel2)}
+  .sess-group > summary::after{
+    content:'▸'; flex:none; color:var(--dim); font-size:10px;
+    transition:transform .18s cubic-bezier(.22,.61,.36,1);
+  }
+  .sess-group[open] > summary::after{transform:rotate(90deg)}
+  .dir-name{
+    flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-family:"Cascadia Mono",Consolas,monospace; font-size:11px;
+  }
+  .dir-count{
+    flex:none; color:var(--fg); font-weight:600; font-size:10.5px; opacity:.7;
+  }
+  .dir-body{padding:4px 4px 3px}
   .sess-title{
     font-size:12.5px; line-height:1.4; overflow:hidden; text-overflow:ellipsis;
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word;
@@ -3719,7 +3742,11 @@
       box.appendChild(d);
       return;
     }
-    for (const s of shown){
+    //
+    // Rows are grouped under their WORKING DIRECTORY: a long session list is
+    // impossible to scan when the same project keeps re-appearing, and the
+    // directory is the one fact that explains why a session exists at all.
+    const sessionRow = (s) => {
       const el = document.createElement('div');
       // A brand-new session has no id yet; its stand-in row is the current one.
       const isCurrent = s.id === threadId || (s.pending && !threadId);
@@ -3790,8 +3817,70 @@
       if (!s.pending) el.appendChild(acts);
 
       el.onclick = () => { if (!s.pending) switchSession(s); };
-      box.appendChild(el);
+      return el;
+    };
+
+    const NO_DIR = '（未指定工作目录）';
+    const groups = new Map();          // directory -> rows, insertion order = recency
+    for (const s of shown){
+      const dir = String(s.cwd || '').trim() || NO_DIR;
+      if (!groups.has(dir)) groups.set(dir, []);
+      groups.get(dir).push(s);
     }
+
+    for (const [dir, rows] of groups){
+      const group = document.createElement('details');
+      group.className = 'sess-group';
+      group.dataset.dir = dir;
+      const summary = document.createElement('summary');
+      const name = document.createElement('span');
+      name.className = 'dir-name';
+      name.textContent = shortDir(dir);
+      name.title = dir;                // the full path lives on hover
+      const count = document.createElement('span');
+      count.className = 'dir-count';
+      count.textContent = String(rows.length);
+      summary.appendChild(name);
+      summary.appendChild(count);
+      group.appendChild(summary);
+      const dirBody = document.createElement('div');
+      dirBody.className = 'dir-body';
+      for (const s of rows) dirBody.appendChild(sessionRow(s));
+      group.appendChild(dirBody);
+      programmaticOpen(group, !collapsedDirs.has(dir));
+      group.addEventListener('toggle', () => {
+        if (consumeScripted(group)) return;
+        if (group.open) collapsedDirs.delete(dir); else collapsedDirs.add(dir);
+        persistCollapsedDirs();
+      });
+      box.appendChild(group);
+    }
+  }
+
+  /**
+   * The directory name shown on a group card.
+   *
+   * Paths are long and the sidebar is 250px, so the last two segments carry the
+   * meaning; the full value stays in the tooltip.
+   */
+  function shortDir(dir){
+    const raw = String(dir || '').trim();
+    if (!raw) return '（未指定工作目录）';
+    const norm = raw.replace(/[\\/]+/g, '\\').replace(/\\+$/, '');
+    const parts = norm.split('\\').filter(Boolean);
+    if (norm.length <= 28 || parts.length <= 2) return norm;
+    return '…\\' + parts.slice(-2).join('\\');
+  }
+
+  /** Which directory cards are folded. Remembered across reloads. */
+  let collapsedDirs = new Set();
+  try {
+    const raw = localStorage.getItem('codexGui.collapsedDirs');
+    if (raw) collapsedDirs = new Set(JSON.parse(raw));
+  } catch { /* private mode, or storage disabled: start unfolded */ }
+
+  function persistCollapsedDirs(){
+    try { localStorage.setItem('codexGui.collapsedDirs', JSON.stringify([...collapsedDirs])); } catch {}
   }
 
   async function loadSessions(){

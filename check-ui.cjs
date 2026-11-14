@@ -279,6 +279,45 @@ async function main(){
     await evaluate("$test('btnRefreshSessions').click()");
     await waitUI("document.querySelectorAll('.sess').length === 2");
   });
+  await check('sessions are grouped into one card per working directory',async()=>{
+    // Asked for as "按照工作目录加一个卡片折叠，工作目录当卡片名".
+    await evaluate("$test('btnRefreshSessions').click()");
+    await waitUI("document.querySelectorAll('#sessionList .sess-group').length >= 1",8000);
+    const g=JSON.parse(await evaluate(`JSON.stringify({
+      groups: document.querySelectorAll('#sessionList .sess-group').length,
+      names: [...document.querySelectorAll('#sessionList .sess-group .dir-name')].map(function(n){return n.textContent;}),
+      titles: [...document.querySelectorAll('#sessionList .sess-group .dir-name')].map(function(n){return n.title;}),
+      counts: [...document.querySelectorAll('#sessionList .sess-group .dir-count')].map(function(n){return n.textContent;}),
+      rowsInside: document.querySelectorAll('#sessionList .sess-group .dir-body .sess').length,
+      allRows: document.querySelectorAll('#sessionList .sess').length
+    })`));
+    console.log('       session groups:', JSON.stringify(g));
+    assert.equal(g.groups,2,'one card per directory (the fixture has two): '+JSON.stringify(g));
+    assert.equal(g.rowsInside,g.allRows,'every row lives inside a card: '+JSON.stringify(g));
+    assert.deepEqual(g.counts,['1','1'],'each card counts its sessions: '+JSON.stringify(g));
+    assert.ok(g.titles.includes(workspaceA) && g.titles.includes(workspaceB),
+      'the full directory is the tooltip: '+JSON.stringify(g));
+
+    // Collapsing a card hides its rows and is remembered.
+    await evaluate("document.querySelector('#sessionList .sess-group > summary').click()");
+    await sleep(250);
+    const collapsed=JSON.parse(await evaluate(`JSON.stringify({
+      open: document.querySelector('#sessionList .sess-group').open,
+      visibleRows: [...document.querySelectorAll('#sessionList .sess-group')][0]
+        .querySelectorAll('.sess').length && [...document.querySelectorAll('#sessionList .sess-group')][0]
+        .querySelector('.sess').checkVisibility(),
+      saved: JSON.parse(localStorage.getItem('codexGui.collapsedDirs')||'[]')
+    })`));
+    console.log('       collapsed:', JSON.stringify(collapsed));
+    assert.equal(collapsed.open,false,'the card folds');
+    assert.equal(collapsed.visibleRows,false,'and hides its rows');
+    assert.equal(collapsed.saved.length,1,'the choice is remembered: '+JSON.stringify(collapsed));
+
+    // Reopen, so later checks (and the screenshot) see the list expanded.
+    await evaluate("document.querySelector('#sessionList .sess-group > summary').click()");
+    await sleep(200);
+    assert.equal(await evaluate("document.querySelector('#sessionList .sess-group').open"),true);
+  });
   await check('session search filters by title and by conversation content',async()=>{
     // The title only carries the first prompt, so searching has to reach into the
     // conversation text as well -- that is the whole point of the feature.
