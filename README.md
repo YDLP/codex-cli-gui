@@ -181,7 +181,7 @@ want to use this as a baseline, these are honest starting points, roughly by val
 | **No side-by-side diff view** | `index.html` (`diffNode`) | Diffs render as unified text; there is no split view or syntax highlighting. |
 | **Multi-tab coordination** | `bridge.cjs` | Two tabs on the same session race; there is a 409 guard but no shared state. |
 | **Few keyboard shortcuts** | `index.html` | Enter / Shift+Enter / Escape / Ctrl+F only. |
-| **Model catalog is static** | `models.json`, `extract-models.cjs` | Needs `node extract-models.cjs` when the CLI ships new models. |
+| **Model catalog is static** | `models.json`, `extract-models.cjs` | Needs `node extract-models.cjs` when the CLI ships new models. The catalog is also **served per CLI version**: an old CLI never lists a new model (e.g. 6.2), and `-m` with it fails with `model_not_found`. Measured: 0.162.1 listed neither 6.2 model, 0.170.0 listed both. `npm i -g @openai/codex@latest` is the fix. |
 | **No mac/Linux launchers** | — | `launch.cjs` works; the `.cmd` / `.vbs` / shortcut scripts do not. |
 | **No cost aggregation** | — | Per-turn tokens are shown; nothing sums across sessions. |
 

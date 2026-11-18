@@ -148,7 +148,7 @@ cmd /c "stop-codex-gui.cmd --no-pause"
 | **没有并排 diff 视图** | `index.html`（`diffNode`） | diff 是统一格式纯文本，没有分栏、没有语法高亮。 |
 | **多标签页没协调** | `bridge.cjs` | 同一会话两个标签页会打架；有 409 保护但没有共享状态。 |
 | **快捷键太少** | `index.html` | 只有 Enter / Shift+Enter / Escape / Ctrl+F。 |
-| **模型目录是静态的** | `models.json`、`extract-models.cjs` | CLI 出新模型时要手动跑 `node extract-models.cjs`。 |
+| **模型目录是静态的** | `models.json`、`extract-models.cjs` | CLI 出新模型时要手动跑 `node extract-models.cjs`。而且**目录由服务器按 CLI 版本下发**：CLI 太旧时，新模型（例如 6.2）在 `codex debug models` 里根本不出现，指定 `-m` 会直接报 `model_not_found`。升级 `npm i -g @openai/codex@latest` 就能看到——实测 0.162.1 看不到 6.2，0.170.0 能看到。 |
 | **没有 mac/Linux 启动脚本** | — | `launch.cjs` 能用，`.cmd` / `.vbs` / 快捷方式不能。 |
 | **没有费用汇总** | — | 显示了每轮 token，但没有跨会话合计。 |
 
